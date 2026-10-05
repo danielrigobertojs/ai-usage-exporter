@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Daniel Rigoberto Jacobo Sandoval
 
 package version
 
@@ -6,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/license"
 )
 
 func TestString(t *testing.T) {
@@ -33,5 +36,15 @@ func TestStringDefaults(t *testing.T) {
 	}
 	if !strings.HasPrefix(String(), "ai-usage-exporter ") {
 		t.Errorf("String() = %q, want prefix %q", String(), "ai-usage-exporter ")
+	}
+}
+
+func TestStringCarriesAttribution(t *testing.T) {
+	got := String()
+
+	for _, want := range []string{license.URL, license.License} {
+		if !strings.Contains(got, want) {
+			t.Errorf("String() = %q, want substring %q", got, want)
+		}
 	}
 }

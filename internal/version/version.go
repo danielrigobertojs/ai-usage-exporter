@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Daniel Rigoberto Jacobo Sandoval
 
 // Package version holds build-time metadata injected via -ldflags.
 package version
@@ -6,6 +7,8 @@ package version
 import (
 	"fmt"
 	"runtime"
+
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/license"
 )
 
 var (
@@ -17,7 +20,10 @@ var (
 	BuildDate = "unknown"
 )
 
-// String returns a single-line, human-readable build identifier.
+// String returns a single-line, human-readable build identifier followed by
+// the project's attribution line, so license and copyright travel with the
+// binary wherever this string is printed.
 func String() string {
-	return fmt.Sprintf("ai-usage-exporter %s (%s, built %s, %s)", Version, Commit, BuildDate, runtime.Version())
+	return fmt.Sprintf("ai-usage-exporter %s (%s, built %s, %s)\n%s",
+		Version, Commit, BuildDate, runtime.Version(), license.Attribution())
 }
