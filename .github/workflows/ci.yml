@@ -45,3 +45,44 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
       - name: build all platforms
         run: make cross
+
+  spdx-headers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check SPDX/copyright headers
+        run: bash scripts/check-spdx.sh
+
+  third-party-licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Regenerate THIRD_PARTY_LICENSES.md
+        run: bash scripts/gen-third-party.sh
+      - name: Fail if committed file is stale, or a dependency is copyleft/unlicensed
+        run: git diff --exit-code THIRD_PARTY_LICENSES.md
+
+  dco:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check Developer Certificate of Origin
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for sha in $(git rev-list "$BASE_SHA..$HEAD_SHA"); do
+            if ! git log -1 --format=%B "$sha" | grep -q '^Signed-off-by: '; then
+              echo "::error::commit $sha is missing a Signed-off-by trailer (DCO)"
+              missing=1
+            fi
+          done
+          exit "$missing"
