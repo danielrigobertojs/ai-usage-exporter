@@ -45,4 +45,8 @@ make fmt     # gofmt -l .
 
 ### Licencia
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](LICENSE). Avisos de atribución de terceros en
+[NOTICE](NOTICE) y [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+Política de marca en [TRADEMARK.md](TRADEMARK.md). Para contribuir, ver
+[CONTRIBUTING.md](CONTRIBUTING.md) (requiere DCO). Para citar este
+proyecto, ver [CITATION.cff](CITATION.cff).
