@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite it using the metadata from this
+  file.
+title: ai-usage-exporter
+abstract: >-
+  A cross-platform Go exporter that scans local AI coding agent logs
+  (Claude Code, Codex CLI, OpenCode, and others) and exposes token, model,
+  session, and cost metrics on a Prometheus /metrics endpoint.
+type: software
+authors:
+  - family-names: "Jacobo Sandoval"
+    given-names: "Daniel Rigoberto"
+license: Apache-2.0
+repository-code: "https://github.com/danielrigobertojs/ai-usage-exporter"
+url: "https://github.com/danielrigobertojs/ai-usage-exporter"
