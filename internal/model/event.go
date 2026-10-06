@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Daniel Rigoberto Jacobo Sandoval
 
 // Package model defines the normalized usage event every provider converges
 // on before dedupe, window aggregation, and cost end up as shared logic

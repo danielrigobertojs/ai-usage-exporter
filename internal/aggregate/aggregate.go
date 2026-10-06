@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Daniel Rigoberto Jacobo Sandoval
 
 // Package aggregate turns a stream of model.UsageEvent into the window-gauge
 // snapshot /metrics serves: it dedupes by EventKey and collapses session
