@@ -95,8 +95,29 @@ crudos retienen. Se descarta para este proyecto porque:
 - Los providers deben deduplicar por id de mensaje al construir el snapshot
   (no por línea de log), para que la compactación y los forks de sesión no
   inflen los totales de una sola pasada de parseo.
-- Para refrescar el snapshot hay que reiniciar el proceso; no hay endpoint
-  de rescan ni señal (`SIGHUP`, etc.) en el alcance actual.
+- Para refrescar el snapshot hay que reiniciar el proceso, salvo que se
+  active explícitamente el mecanismo opt-in descrito abajo: por defecto
+  (`scan_interval: 0`) no hay reescaneo y esta consecuencia se sostiene tal
+  cual.
+
+### Excepción explícita y opt-in: SIGHUP y `scan_interval`
+
+JCB-314 añade un disparador de reescaneo que el operador debe activar a
+propósito, sin contradecir la decisión de arriba: **el default sigue siendo
+cero reescaneos**. Dos formas de disparar uno, ambas apagadas salvo que se
+pidan:
+
+- Enviar `SIGHUP` al proceso en ejecución.
+- Configurar `scan_interval` a un valor mayor que cero (su default es `0`,
+  que lo desactiva).
+
+Cada disparo vuelve a correr `scan.Run` completo y reemplaza el snapshot
+publicado — no hay estado incremental ni offset entre escaneos, igual que en
+el arranque. Un disparo que llega mientras un escaneo ya está en curso se
+descarta, nunca se encola: una ráfaga de señales durante un escaneo lento
+colapsa a, como mucho, un reescaneo extra, no uno por señal. Esto no reabre
+la decisión del gauge: cada reescaneo sigue siendo una foto completa del
+historial disponible en ese instante, nunca un acumulador entre escaneos.
 
 ## Condición de reapertura
 
