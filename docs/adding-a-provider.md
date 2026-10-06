@@ -77,22 +77,28 @@ aggregator and the same privacy contract downstream:
 
 ### 3. Register it
 
+Add one line to `internal/provider/all.Registry()` - the single place that
+lists every production provider:
+
 ```go
-reg := provider.NewRegistry()
-if err := reg.Register(fake.New(n)); err != nil {
-	// only happens on a duplicate ID - a programming error, not a runtime one
+// internal/provider/all/all.go
+providers := []provider.Provider{
+	claudecode.New(),
+	yourtool.New(), // add this
 }
 ```
 
 `Register` errors on a duplicate ID instead of silently overwriting it.
 `Registry.All()` returns providers in registration order; `Registry.Get(id)`
-looks one up by its `tool` label value.
+looks one up by its `tool` label value. `internal/provider` itself never
+imports a concrete provider - only `all` does - so adding one here can never
+create an import cycle.
 
 ### 4. Add a fixture
 
-Fixtures live under `internal/providers/<tool>/testdata/` (plural
-`providers`, to leave room for `internal/provider`, the shared package).
-Hand-write them, anonymized: every content field gets the literal string
+Fixtures live under `internal/provider/<tool>/testdata/`, next to the
+concrete provider itself (see `internal/provider/claudecode` for the worked
+example beyond `fake`). Hand-write them, anonymized: every content field gets the literal string
 `"REDACTED"`, never a real prompt or a real file path. Cover at least: a
 normal file, one with the tool's known edge case (Claude Code's
 compaction/`/resume` duplicate `uuid`, Codex's cumulative `last_*`
@@ -105,7 +111,7 @@ Table-driven, against the fixture: assert the exact events `Parse` emits
 abort the scan, and assert the sentinel-content test from step 2. Then run:
 
 ```sh
-go test ./internal/providers/<tool>/... -race -cover
+go test ./internal/provider/<tool>/... -race -cover
 ```
 
 Aim for the same bar the rest of the exporter holds: `>= 85%` coverage, and
