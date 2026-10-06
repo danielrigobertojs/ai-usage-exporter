@@ -99,6 +99,19 @@ herramienta reporta por su cuenta, cuando lo reporta.
 - **Significado:** coste estimado en dólares atribuible a `model` dentro de
   `tool` en la ventana `window`, derivado de los tokens consumidos y la
   tabla de precios vigente en el momento del escaneo.
+- **Ausente**, nunca en `0`, para un par (`tool`, `model`) que el catálogo de
+  precios no conoce — un modelo nuevo no es un modelo gratis.
+
+#### Reconciliación con el coste nativo de un provider
+
+Algunos formatos (OpenCode, por ejemplo) ya traen un campo de coste propio.
+**El catálogo de precios siempre gana sobre ese coste nativo**: todas las
+herramientas se comparan bajo la misma regla de tarificación, en vez de que
+cada una aporte su propia noción de dólar. En la práctica esto ni siquiera
+es una decisión que el collector tenga que arbitrar en tiempo de ejecución:
+`model.UsageEvent` no tiene un campo de coste, así que `ai_usage_cost_usd`
+solo puede derivarse del catálogo — no hay otra fuente con la que
+reconciliar.
 
 ### `ai_usage_sessions`
 
