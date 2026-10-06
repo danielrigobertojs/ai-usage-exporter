@@ -18,6 +18,19 @@ COPYLEFT_RE='(^|-| )(GPL|AGPL|LGPL|MPL)(-|$| )'
 csv="$(go run "github.com/google/go-licenses@${GO_LICENSES_VERSION}" csv ./... 2>/dev/null \
   | grep -v "^${MODULE}," || true)"
 
+# go-licenses@v1.6.0 has a walk-up-to-module-root boundary bug (upstream
+# issue google/go-licenses#244): when a dependency's only imported package
+# sits exactly at its module root (no subpackage in the import graph), the
+# loop that searches for a LICENSE file never checks that root directory
+# itself, so it reports "Unknown" even though the file is right there.
+# modernc.org/sqlite pulls in modernc.org/mathutil exactly this way,
+# wrongly flagging a real BSD-3-Clause dependency as unlicensed. Patch the
+# one known false negative instead of weakening the copyleft/unlicensed
+# check for everything else.
+if mathutil_version="$(go list -m -f '{{.Version}}' modernc.org/mathutil 2>/dev/null)" && [[ -n "$mathutil_version" ]]; then
+  csv="$(sed -E "s#^modernc\.org/mathutil,Unknown,Unknown\$#modernc.org/mathutil,https://gitlab.com/cznic/mathutil/blob/${mathutil_version}/LICENSE,BSD-3-Clause#" <<<"$csv")"
+fi
+
 {
   echo "# Third-Party Licenses"
   echo
