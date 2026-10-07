@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/cli"
+
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/collector"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/config"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/pricing"
@@ -24,6 +26,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] != "serve" {
+		os.Exit(cli.Execute(os.Args[1:], os.Stdout, os.Stderr))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "serve" {
+		os.Args = append(os.Args[:1], os.Args[2:]...)
+	}
 	if err := run(); err != nil {
 		slog.Error("ai-usage-exporter: fatal", "error", err)
 		os.Exit(1)
