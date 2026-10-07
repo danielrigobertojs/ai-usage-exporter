@@ -49,10 +49,10 @@ func TestTrackerDelta(t *testing.T) {
 func TestTrackerDeltaNeverNegative(t *testing.T) {
 	sequences := [][]Cumulative{
 		{
-			{Input: 100, Output: 30, Cached: 0, Total: 130},
-			{Input: 250, Output: 60, Cached: 20, Total: 330},
-			{Input: 80, Output: 25, Cached: 5, Total: 110},
-			{Input: 90, Output: 10, Cached: 0, Total: 100},
+			{Input: 100, Output: 30, CachedInput: 0, ReasoningOutput: 0, Total: 130},
+			{Input: 250, Output: 60, CachedInput: 20, ReasoningOutput: 5, Total: 330},
+			{Input: 80, Output: 25, CachedInput: 5, ReasoningOutput: 2, Total: 110},
+			{Input: 90, Output: 10, CachedInput: 0, ReasoningOutput: 0, Total: 100},
 		},
 	}
 
@@ -60,7 +60,14 @@ func TestTrackerDeltaNeverNegative(t *testing.T) {
 		tr := NewTracker()
 		for i, c := range seq {
 			d := tr.Delta(c)
-			for name, v := range map[string]int64{"Input": d.Input, "Output": d.Output, "Cached": d.Cached, "Total": d.Total} {
+			fields := map[string]int64{
+				"Input":           d.Input,
+				"Output":          d.Output,
+				"CachedInput":     d.CachedInput,
+				"ReasoningOutput": d.ReasoningOutput,
+				"Total":           d.Total,
+			}
+			for name, v := range fields {
 				if v < 0 {
 					t.Fatalf("observation %d: delta field %s = %d, want >= 0", i, name, v)
 				}
@@ -71,13 +78,32 @@ func TestTrackerDeltaNeverNegative(t *testing.T) {
 
 func TestTrackerPerFieldIndependence(t *testing.T) {
 	tr := NewTracker()
-	tr.Delta(Cumulative{Input: 100, Output: 50, Cached: 10, Total: 160})
+	tr.Delta(Cumulative{Input: 100, Output: 50, CachedInput: 10, ReasoningOutput: 5, Total: 160})
 
-	// Output resets while Input and Cached keep growing: each field's reset
-	// detection must be independent of the others.
-	got := tr.Delta(Cumulative{Input: 150, Output: 20, Cached: 15, Total: 185})
-	want := Cumulative{Input: 50, Output: 20, Cached: 5, Total: 25}
+	// Output resets while Input and CachedInput keep growing: each field's
+	// reset detection must be independent of the others.
+	got := tr.Delta(Cumulative{Input: 150, Output: 20, CachedInput: 15, ReasoningOutput: 1, Total: 185})
+	want := Cumulative{Input: 50, Output: 20, CachedInput: 5, ReasoningOutput: 1, Total: 25}
 	if got != want {
 		t.Fatalf("Delta() = %+v, want %+v", got, want)
+	}
+}
+
+func TestTrackerDuplicateObservationYieldsZeroDelta(t *testing.T) {
+	// Codex emits a duplicate token_count for the same turn in some
+	// sessions (observed in real rollouts). Feeding total_token_usage
+	// through Tracker makes the duplicate a zero delta instead of a
+	// double-count, which is the whole reason codex.go feeds Tracker from
+	// total_token_usage and never from last_token_usage.
+	tr := NewTracker()
+	first := tr.Delta(Cumulative{Input: 15448, Output: 42, CachedInput: 12000, ReasoningOutput: 10, Total: 15490})
+	if first.Total != 15490 {
+		t.Fatalf("first observation Total = %d, want 15490", first.Total)
+	}
+
+	dup := tr.Delta(Cumulative{Input: 15448, Output: 42, CachedInput: 12000, ReasoningOutput: 10, Total: 15490})
+	want := Cumulative{}
+	if dup != want {
+		t.Fatalf("duplicate observation Delta() = %+v, want all-zero %+v", dup, want)
 	}
 }
