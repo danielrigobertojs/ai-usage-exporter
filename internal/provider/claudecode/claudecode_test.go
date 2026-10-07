@@ -197,7 +197,7 @@ func TestParseEmptyFileEmitsNoEventsNoError(t *testing.T) {
 }
 
 func TestParseSkipsOversizedLineWithoutAbortingFile(t *testing.T) {
-	oversized := bytes.Repeat([]byte("x"), maxLineBytes+(1<<20)) // 1 MiB over the cap
+	oversized := bytes.Repeat([]byte("x"), provider.MaxJSONLLineBytes+(1<<20)) // 1 MiB over the cap
 
 	valid := `{"type":"assistant","uuid":"oversized-ok","sessionId":"s","cwd":"/home/user/p","timestamp":"2026-04-01T00:00:00Z","message":{"model":"claude-opus-4","content":[],"usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}`
 
@@ -259,7 +259,7 @@ func TestNextLinePropagatesGenuineReadError(t *testing.T) {
 	wantErr := errors.New("boom")
 	br := bufio.NewReader(&singleErrReader{data: []byte("incomplete"), err: wantErr})
 
-	line, err := nextLine(br)
+	line, err := provider.ReadJSONLLine(br)
 	if line != nil {
 		t.Errorf("line = %q, want nil", line)
 	}

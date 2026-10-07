@@ -10,7 +10,6 @@ package codex
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -27,19 +26,6 @@ import (
 
 const toolID = "codex"
 const unknownModel = "unknown"
-
-// maxLineBytes bounds how much of a single JSONL line nextLine holds in
-// memory at once. Real rollouts carry turn_context lines with large nested
-// sandbox-policy payloads, but a line beyond even this cap is corrupt or
-// adversarial input, not a real session: it is discarded (and the rest of
-// the file still gets scanned) rather than grown into without bound.
-//
-// This mirrors internal/provider/claudecode's nextLine byte-for-byte rather
-// than importing it: that package belongs to a different in-flight issue
-// (JCB-315 owns extracting shared JSONL-reading helpers), and duplicating
-// ~30 lines beats taking a cross-package dependency on another issue's
-// unexported helper while both are mid-flight.
-const maxLineBytes = 8 << 20 // 8 MiB
 
 // New returns the Codex provider.
 func New() provider.Provider {
@@ -175,7 +161,7 @@ func (codexProvider) Parse(ctx context.Context, src provider.Source, emit func(m
 			return err
 		}
 
-		line, rerr := nextLine(br)
+		line, rerr := provider.ReadJSONLLine(br)
 		if line != nil {
 			var rl rolloutLine
 			if err := json.Unmarshal(line, &rl); err == nil {
@@ -277,47 +263,4 @@ func (codexProvider) Parse(ctx context.Context, src provider.Source, emit func(m
 func sessionIDFromFilename(srcPath string) string {
 	base := filepath.Base(srcPath)
 	return strings.TrimSuffix(base, filepath.Ext(base))
-}
-
-// nextLine reads one newline-terminated (or EOF-terminated) line from br,
-// with a trailing "\n"/"\r\n" stripped. A line longer than maxLineBytes is
-// still fully consumed from br - so the next call resumes at the following
-// line - but is reported back as a nil slice instead of being held in
-// memory: the caller treats nil with a nil error as "skip and keep going",
-// never as an error. err is nil while there is a line to return, io.EOF
-// once br is exhausted (possibly together with one final line that had no
-// trailing newline), or a genuine read error otherwise.
-func nextLine(br *bufio.Reader) (line []byte, err error) {
-	var buf []byte
-	oversized := false
-	for {
-		chunk, rerr := br.ReadSlice('\n')
-		if !oversized {
-			if len(buf)+len(chunk) > maxLineBytes {
-				oversized = true
-				buf = nil
-			} else {
-				buf = append(buf, chunk...)
-			}
-		}
-		switch rerr {
-		case nil:
-			if oversized {
-				return nil, nil
-			}
-			return bytes.TrimSuffix(bytes.TrimSuffix(buf, []byte("\n")), []byte("\r")), nil
-		case bufio.ErrBufferFull:
-			continue
-		case io.EOF:
-			if oversized {
-				return nil, io.EOF
-			}
-			if len(buf) == 0 {
-				return nil, io.EOF
-			}
-			return bytes.TrimSuffix(buf, []byte("\r")), io.EOF
-		default:
-			return nil, rerr
-		}
-	}
 }
