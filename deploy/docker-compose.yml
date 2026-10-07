@@ -1,0 +1,37 @@
+# Prometheus + Grafana de ejemplo para ai-usage-exporter. El exporter en sí
+# NO corre aquí: se asume en el host, scrapeado via host.docker.internal
+# (ver deploy/prometheus/prometheus.yml). Por eso este compose no depende
+# de la imagen de contenedor de JCB-317.
+#
+# Credenciales de Grafana por variable de entorno, nunca hardcodeadas: copia
+# deploy/.env.example a deploy/.env y ajusta los valores antes de levantar
+# esto. Sin ese archivo, `docker compose up` falla en vez de arrancar con un
+# admin/admin de facto.
+services:
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      # No-op en Docker Desktop (macOS/Windows), donde host.docker.internal
+      # ya resuelve solo. Necesario en Linux, donde host-gateway es la
+      # forma soportada de llegar a un puerto del host desde el contenedor.
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:?falta GRAFANA_ADMIN_USER en deploy/.env}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?falta GRAFANA_ADMIN_PASSWORD en deploy/.env}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    restart: unless-stopped
