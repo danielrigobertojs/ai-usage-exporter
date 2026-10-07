@@ -46,6 +46,12 @@ con `cached_input_tokens > 0`, y `cached_input_tokens > input_tokens` en 0
 casos; `total_tokens == input_tokens + output_tokens` en 1913/1913 de los
 registros con `reasoning_output_tokens > 0`.
 
+Reverificado de forma independiente el 2026-10-07 sobre los **275** rollouts
+reales disponibles (1934 registros `token_count`, 57.828.243 tokens): la suma
+de las cuatro clases que emite el parser iguala exactamente un
+`Δtotal_tokens` recomputado aparte desde el JSON crudo, con **0**
+discrepancias, 0 eventos con modelo desconocido y 0 sesiones sin id.
+
 Evidencia OpenCode, sobre los 18.423 mensajes de asistente de una base real,
 con la aritmética explicada al 100 % y sin un solo caso sin clasificar:
 
@@ -89,6 +95,31 @@ reasoning   = reasoning
 output      = nested ? max(0, output - reasoning) : output
 ```
 
+### Los 6 registros aritmeticamente contradictorios
+
+Verificado de forma independiente el 2026-10-07 sobre la misma base real
+(18.423 mensajes de asistente): de los 1122 registros anidados, **6 declaran
+`reasoning > output`** — por ejemplo `output=85, reasoning=88, total=94158`
+con `total == i+o+cr+cw`. Esos seis son auto-contradictorios en origen:
+`reasoning` no puede estar contenido en un `output` menor que el, y a la vez
+`total` no lo incluye. OpenCode no deriva ambos contadores de la misma
+fuente, y ninguna de las dos ramas de la formula reconcilia el registro:
+
+| Rama | `output` emitido | Suma de las 5 clases | Error frente a `total` |
+| --- | --- | --- | --- |
+| Anidado con `max(0, ...)` | 0 | `total + (reasoning - output)` | +1 a +42 tokens (63 en total) |
+| Aditivo (sin restar) | `output` | `total + reasoning` | +85 a +625 tokens (1719 en total) |
+
+Se mantiene la rama anidada con el `max(0, ...)`: es la cota de error mas
+baja de las dos (63 tokens sobre 1.354.709.078 emitidos, 4,7e-8), y no
+introduce un caso especial que un modelo nuevo tendria que volver a
+descubrir. La consecuencia es que **el invariante por registro admite esta
+excepcion documentada y acotada**: un registro anidado con
+`reasoning > output` suma `total + (reasoning - output)`, no `total`. Un test
+de invariante que la ignore falla sobre datos reales; uno que la trate como
+aprobada sin mas pierde la senal si el caso crece. La forma correcta de
+fijarla es un fixture explicito con esa aritmetica (JCB-323).
+
 La regla de OpenCode se deriva del registro, no de una lista de modelos
 mantenida a mano: si `total` ya cuadra sin `reasoning`, entonces `reasoning`
 viaja dentro de `output` y hay que restarlo. Un modelo nuevo con la convencion
@@ -123,7 +154,9 @@ la ausencia del dato se distinga de un valor medido de cero.
   si ese registro es anidado o aditivo, y 673 registros no declaran `total`
   en absoluto. Un test que sume todo y lo compare con la suma de `total`
   falla sobre datos reales por 6,3 % de los registros, y "arreglarlo" con una
-  resta uniforme reintroduce el doble conteo en los otros 93,7 %.
+  resta uniforme reintroduce el doble conteo en los otros 93,7 %.  El
+  invariante por registro tiene una unica excepcion documentada y acotada:
+  los 6 registros con `reasoning > output` descritos arriba.
 - Los fixtures de provider deben ser **extractos redactados de datos reales**,
   no sintéticos. Un fixture escrito desde la misma suposición que el parser no
   prueba nada; esa es la causa raíz de los dos defectos. Redactar significa
