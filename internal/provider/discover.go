@@ -95,7 +95,13 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 				continue
 			}
 			stats.FilesSeen++
-			if info.Size() > b.MaxBytesFile {
+			// MaxBytesFile bounds how much a streaming Provider.Parse has to
+			// read sequentially into memory. A SourceSQLite candidate is
+			// never streamed - it's opened read-only and queried through
+			// indices - so its on-disk size predicts neither the memory nor
+			// the time Parse will take, and the cap does not apply to it
+			// (ADR-005).
+			if d.Kind != SourceSQLite && info.Size() > b.MaxBytesFile {
 				stats.FilesSkipped++
 				continue
 			}
@@ -120,6 +126,13 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 	var totalBytes int64
 	cutoff := false
 	for _, c := range candidates {
+		// A SourceSQLite candidate's bytes never count against
+		// MaxTotalBytes, for the same reason MaxBytesFile doesn't apply to
+		// it above: it isn't read in full, so its size isn't a cost this
+		// budget should be spent on. Counting it would let one large
+		// opencode.db starve every other provider's streaming budget in the
+		// same scan (ADR-005).
+		countsTowardTotal := c.Kind != SourceSQLite
 		switch {
 		case cutoff:
 		case time.Now().After(b.Deadline):
@@ -128,7 +141,7 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 		case b.MaxFiles > 0 && len(sources) >= b.MaxFiles:
 			stats.BudgetHit = true
 			cutoff = true
-		case b.MaxTotalBytes > 0 && totalBytes+c.Size > b.MaxTotalBytes:
+		case countsTowardTotal && b.MaxTotalBytes > 0 && totalBytes+c.Size > b.MaxTotalBytes:
 			stats.BudgetHit = true
 			cutoff = true
 		}
@@ -137,7 +150,9 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 			continue
 		}
 		sources = append(sources, c)
-		totalBytes += c.Size
+		if countsTowardTotal {
+			totalBytes += c.Size
+		}
 	}
 
 	return sources, stats, nil

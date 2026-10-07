@@ -7,6 +7,28 @@ on Windows, or wherever `OPENCODE_DATA_HOME` points), tables `session` and
 `message`, with tokens and native cost living inside `message.data`'s JSON
 blob rather than in their own columns.
 
+### The size of `opencode.db` does not limit the scan
+
+`internal/provider/discover.go`'s scan budget caps how large a candidate
+file may be (`MaxBytesFile`, 256 MiB) and how many total bytes a scan may
+admit (`MaxTotalBytes`, 4 GiB) - but both caps are exemptions for
+`SourceSQLite`, this provider's `Descriptor.Kind`. See
+[ADR-005](../adr/0005-scan-budget-by-source-kind.md) for the full
+rationale; in short: those caps bound how much a *streaming* `Parse` has to
+read sequentially, and this provider never streams the file. `Parse` opens
+`opencode.db` through `modernc.org/sqlite` with the read-only DSN in
+`DSN()` and runs the indexed query below; the driver pages the file on
+demand through SQLite's own B-tree engine, never loading it into memory.
+A real `opencode.db` observed in production reached 2.75 GB - 10x past
+`MaxBytesFile` - and was silently dropped by `Discover` before this
+exemption existed, which is exactly the "CI green, zero events on real
+data" failure mode ADR-004 documents for the other two providers, one
+layer further down in the scan budget instead of in the parser.
+
+What still bounds a pathologically slow query against a huge or corrupt
+`opencode.db` is the scan's `Deadline` and the `busy_timeout(2000)` baked
+into `DSN()` - not the file's size.
+
 ### Query
 
 ```sql
