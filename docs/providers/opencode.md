@@ -12,18 +12,66 @@ blob rather than in their own columns.
 ```sql
 SELECT m.id, m.session_id, m.data, s.directory
 FROM message m JOIN session s ON s.id = m.session_id
-WHERE m.role = 'assistant'
+WHERE json_valid(m.data) AND json_extract(m.data, '$.role') = 'assistant'
 ORDER BY m.id;
 ```
 
-Only `role = 'assistant'` rows become events; user and tool-role rows are
-read by the join but filtered out before `m.data` is ever decoded. From
-`m.data` this provider extracts only: `modelID`, `providerID`,
-`time.created`, `tokens.input`, `tokens.output`, `tokens.cache.read`,
-`tokens.cache.write`, `tokens.reasoning`, and `cost`. OpenCode's schema has
-changed across versions, so decoding is tolerant: a missing field decodes
-to its zero value, never an error, and a row whose `data` isn't valid JSON
-at all is skipped rather than aborting the scan.
+`role` is **not** a column of the real `message` table - that table is just
+`(id, session_id, time_created, time_updated, data)`, and `role` lives
+inside the `data` JSON blob like everything else this provider reads. A
+query that filters on `m.role` fails with SQLite's `no such column: m.role`
+on every real `opencode.db`, aborting the whole scan; `json_extract` is the
+only correct way to filter on it. `json_valid(m.data)` must come first:
+SQLite short-circuits `AND`, and `json_extract` raises a `malformed JSON`
+error instead of returning `NULL` when `data` isn't valid JSON at all -
+without the guard, a single corrupt row would abort the entire query rather
+than just being excluded by it. Only `role = 'assistant'` rows become
+events; user and tool-role rows are read by the join but filtered out
+before `m.data` is ever decoded. From `m.data` this provider extracts only:
+`modelID`, `providerID`, `time.created`, `tokens.total`, `tokens.input`,
+`tokens.output`, `tokens.cache.read`, `tokens.cache.write`,
+`tokens.reasoning`, and `cost`. OpenCode's schema has changed across
+versions, so decoding is tolerant: a missing field decodes to its zero
+value, never an error, and a row whose `data` isn't valid JSON at all is
+skipped rather than aborting the scan.
+
+### Reasoning nesting
+
+Per [ADR-004](../adr/0004-token-class-normalization.md), OpenCode does not
+use one `reasoning`-vs-`output` convention across every model it talks to.
+Measured over 18,423 real assistant records, 1,122 of them - all a single
+`opencode-go`/`kimi-k2.5` pair - have `reasoning` counted *inside* `output`
+as well as on its own, instead of disjointly. Emitting both as-is would
+double-count those reasoning tokens.
+
+The decision is derived from each record's own declared arithmetic, never
+from a hardcoded model list, so a new model that adopts either convention
+is covered without a code change:
+
+```
+nested := tokens.total present
+          && tokens.total == input + output + cache.read + cache.write
+          && reasoning > 0
+
+output = nested ? max(0, tokens.output - tokens.reasoning) : tokens.output
+```
+
+If `total` already balances without `reasoning`, then `reasoning` travels
+inside `output` and must be subtracted; `input`, `cache.read`, `cache.write`
+and `reasoning` are emitted unchanged either way. When `tokens.total` is
+absent (673/18,423 real records), there is no arithmetic to check, and the
+default is additive (no subtraction) - correct for all 673, since 533 of
+them are `opencode`/`grok-code` with `reasoning > 0` (a pair that is
+additive in every record where `total` is present) and the remaining 140
+have `reasoning == 0`, where the convention makes no difference.
+
+Because the nesting decision is per record, the five-class-sum invariant
+this project requires of every provider (`docs/adr/0004-token-class-normalization.md`)
+is also checked per record for OpenCode, not as one aggregate sum: a record
+with `total` present must have its five emitted classes sum to exactly that
+total, after any nesting subtraction; a record with no `total` has nothing
+to reconcile against and is excluded from the check rather than assumed to
+pass or fail it.
 
 The native `cost` field is decoded but currently has nowhere to go:
 `model.UsageEvent` carries no cost field yet, and extending that struct is
