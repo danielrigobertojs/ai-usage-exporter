@@ -1,0 +1,18 @@
+# Scrapea ai-usage-exporter corriendo en el host, no en un contenedor: el
+# binario lee logs locales del usuario (~/.claude, ~/.codex, ~/.local/share/opencode)
+# y JCB-316 no depende de la imagen de contenedor de JCB-317.
+#
+# scrape_interval en 60s es intencional, no un valor por defecto sin pensar:
+# /metrics sirve un único snapshot tomado al arrancar el proceso (ver
+# ADR-001, "parseo al arranque, gauges, sin estado persistente"). El valor
+# no cambia entre scrapes salvo que el exporter se reinicie o reciba un
+# reescaneo explícito (SIGHUP / scan_interval), así que scrapear más
+# seguido que eso no aporta resolución real: solo genera más muestras
+# idénticas en el TSDB.
+global:
+  scrape_interval: 60s
+
+scrape_configs:
+  - job_name: ai-usage-exporter
+    static_configs:
+      - targets: ["host.docker.internal:9477"]

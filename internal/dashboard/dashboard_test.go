@@ -1,0 +1,182 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Daniel Rigoberto Jacobo Sandoval
+
+// Package dashboard has no production code of its own: it exists to pin
+// deploy/grafana/dashboards/ai-usage-overview.json against the metric
+// contract in docs/metrics.md, so a panel referencing a metric name that
+// doesn't exist (typo or a metric that got renamed) breaks CI instead of
+// shipping a dashboard with a broken query.
+package dashboard
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"sort"
+	"strings"
+	"testing"
+
+	dashboards "github.com/danielrigobertojs/ai-usage-exporter/deploy/grafana/dashboards"
+)
+
+type panel struct {
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Targets     []target `json:"targets"`
+	Panels      []panel  `json:"panels"` // defensive: collapsed Grafana rows nest panels here
+}
+
+type target struct {
+	Expr string `json:"expr"`
+}
+
+type grafanaDashboard struct {
+	Title  string  `json:"title"`
+	Panels []panel `json:"panels"`
+}
+
+var wantPanelTitles = []string{
+	"Fila de estado",
+	"Tokens por herramienta",
+	"Coste por modelo",
+	"Reparto por clase de token",
+	"Tendencia de tokens",
+	"Coste acumulado del mes",
+	"Salud del exporter",
+}
+
+func flattenPanels(panels []panel) []panel {
+	var out []panel
+	for _, p := range panels {
+		out = append(out, p)
+		out = append(out, flattenPanels(p.Panels)...)
+	}
+	return out
+}
+
+func loadDashboard(t *testing.T) grafanaDashboard {
+	t.Helper()
+	var d grafanaDashboard
+	if err := json.Unmarshal(dashboards.AIUsageOverviewJSON, &d); err != nil {
+		t.Fatalf("ai-usage-overview.json does not deserialize: %v", err)
+	}
+	return d
+}
+
+func TestDashboardDeserializes(t *testing.T) {
+	d := loadDashboard(t)
+	if len(d.Panels) == 0 {
+		t.Fatal("dashboard deserialized but has zero panels")
+	}
+}
+
+func TestDashboardHasExpectedPanels(t *testing.T) {
+	d := loadDashboard(t)
+	flat := flattenPanels(d.Panels)
+
+	got := make([]string, 0, len(flat))
+	for _, p := range flat {
+		got = append(got, p.Title)
+	}
+	sort.Strings(got)
+
+	want := append([]string(nil), wantPanelTitles...)
+	sort.Strings(want)
+
+	if len(got) != len(want) {
+		t.Fatalf("expected exactly %d panels, got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("panel titles mismatch: got %v, want %v", got, want)
+		}
+	}
+}
+
+// contractMetricHeader matches a metrics.md section header for one metric,
+// e.g. "### `ai_usage_tokens`".
+var contractMetricHeader = regexp.MustCompile("^### `(ai_usage_[a-z0-9_]+)`$")
+
+// exprMetricName matches any ai_usage_* identifier referenced inside a
+// PromQL expression.
+var exprMetricName = regexp.MustCompile(`ai_usage_[a-zA-Z0-9_]*`)
+
+func contractedMetricNames(t *testing.T) map[string]bool {
+	t.Helper()
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not resolve path of dashboard_test.go")
+	}
+	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
+	metricsDoc := filepath.Join(repoRoot, "docs", "metrics.md")
+
+	raw, err := os.ReadFile(metricsDoc)
+	if err != nil {
+		t.Fatalf("reading %s: %v", metricsDoc, err)
+	}
+
+	names := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if m := contractMetricHeader.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+			names[m[1]] = true
+		}
+	}
+
+	// A format change in docs/metrics.md (different heading level, renamed
+	// section) must fail loudly here, not silently validate every panel
+	// against an empty allow-list. check-spdx.sh had exactly this failure
+	// mode once: green because it examined zero files.
+	if len(names) == 0 {
+		t.Fatalf("extracted zero metric names from %s; the heading format probably changed and this test needs updating", metricsDoc)
+	}
+
+	return names
+}
+
+func allExprs(t *testing.T) []string {
+	d := loadDashboard(t)
+	var exprs []string
+	for _, p := range flattenPanels(d.Panels) {
+		for _, tg := range p.Targets {
+			if tg.Expr != "" {
+				exprs = append(exprs, tg.Expr)
+			}
+		}
+	}
+	if len(exprs) == 0 {
+		t.Fatal("dashboard has zero panel expressions; nothing to validate")
+	}
+	return exprs
+}
+
+func TestDashboardExpressionsOnlyReferenceContractedMetrics(t *testing.T) {
+	contracted := contractedMetricNames(t)
+
+	for _, expr := range allExprs(t) {
+		for _, name := range exprMetricName.FindAllString(expr, -1) {
+			if !contracted[name] {
+				t.Errorf("expr %q references metric %q, which is not documented in docs/metrics.md", expr, name)
+			}
+		}
+	}
+}
+
+func TestDashboardExpressionsNeverUseRateOrIncrease(t *testing.T) {
+	for _, expr := range allExprs(t) {
+		if strings.Contains(expr, "rate(") || strings.Contains(expr, "increase(") {
+			t.Errorf("expr %q uses rate()/increase() over a window gauge (ADR-001) - this is always wrong for these series", expr)
+		}
+	}
+}
+
+func TestDashboardPanelsHaveNonEmptyDescriptions(t *testing.T) {
+	d := loadDashboard(t)
+	for _, p := range flattenPanels(d.Panels) {
+		if strings.TrimSpace(p.Description) == "" {
+			t.Errorf("panel %q has an empty description", p.Title)
+		}
+	}
+}
