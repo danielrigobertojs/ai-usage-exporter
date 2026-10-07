@@ -14,7 +14,6 @@ package claudecode
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -31,14 +30,6 @@ import (
 // toolID is the `tool` label value for every event this provider emits -
 // a public contract once shipped, per provider.Descriptor.ID.
 const toolID = "claude-code"
-
-// maxLineBytes bounds how much of a single JSONL line nextLine holds in
-// memory at once. Real assistant entries can exceed bufio.Scanner's default
-// 64 KiB limit, but a line beyond even this cap is corrupt or adversarial
-// input, not a real session: it is discarded rather than grown into without
-// bound, and - unlike bufio.Scanner hitting ErrTooLong - discarding it does
-// not abort the rest of the file.
-const maxLineBytes = 8 << 20 // 8 MiB
 
 // New returns the Claude Code provider.
 func New() provider.Provider {
@@ -118,7 +109,7 @@ func (claudeCode) Parse(ctx context.Context, src provider.Source, emit func(mode
 			return err
 		}
 
-		line, rerr := nextLine(br)
+		line, rerr := provider.ReadJSONLLine(br)
 		if line != nil {
 			if err := parseAndEmit(line, fallbackSession, src.Path, emit); err != nil {
 				return err
@@ -201,47 +192,4 @@ func projectID(cwd, srcPath string) string {
 		return filepath.ToSlash(filepath.Clean(cwd))
 	}
 	return filepath.Base(filepath.Dir(srcPath))
-}
-
-// nextLine reads one newline-terminated (or EOF-terminated) line from br,
-// with a trailing "\n"/"\r\n" stripped. A line longer than maxLineBytes is
-// still fully consumed from br - so the next call resumes at the following
-// line - but is reported back as a nil slice instead of being held in
-// memory: the caller treats nil with a nil error as "skip and keep going",
-// never as an error. err is nil while there is a line to return, io.EOF
-// once br is exhausted (possibly together with one final line that had no
-// trailing newline), or a genuine read error otherwise.
-func nextLine(br *bufio.Reader) (line []byte, err error) {
-	var buf []byte
-	oversized := false
-	for {
-		chunk, rerr := br.ReadSlice('\n')
-		if !oversized {
-			if len(buf)+len(chunk) > maxLineBytes {
-				oversized = true
-				buf = nil
-			} else {
-				buf = append(buf, chunk...)
-			}
-		}
-		switch rerr {
-		case nil:
-			if oversized {
-				return nil, nil
-			}
-			return bytes.TrimSuffix(bytes.TrimSuffix(buf, []byte("\n")), []byte("\r")), nil
-		case bufio.ErrBufferFull:
-			continue
-		case io.EOF:
-			if oversized {
-				return nil, io.EOF
-			}
-			if len(buf) == 0 {
-				return nil, io.EOF
-			}
-			return bytes.TrimSuffix(buf, []byte("\r")), io.EOF
-		default:
-			return nil, rerr
-		}
-	}
 }

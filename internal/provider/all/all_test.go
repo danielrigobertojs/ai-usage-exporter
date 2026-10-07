@@ -5,12 +5,23 @@ package all
 
 import "testing"
 
-func TestRegistryRegistersClaudeCode(t *testing.T) {
+func TestRegistryRegistersProductionProviders(t *testing.T) {
 	reg, err := Registry()
 	if err != nil {
 		t.Fatalf("Registry(): unexpected error: %v", err)
 	}
-	if _, ok := reg.Get("claude-code"); !ok {
-		t.Error(`Registry().Get("claude-code") = _, false; want true`)
+
+	wantIDs := []string{"claude-code", "codex", "opencode"}
+	providers := reg.All()
+	if len(providers) != len(wantIDs) {
+		t.Fatalf("Registry().All() returned %d providers, want %d", len(providers), len(wantIDs))
+	}
+	for i, want := range wantIDs {
+		if got := providers[i].Descriptor().ID; got != want {
+			t.Errorf("Registry().All()[%d].Descriptor().ID = %q, want %q", i, got, want)
+		}
+		if _, ok := reg.Get(want); !ok {
+			t.Errorf("Registry().Get(%q) = _, false; want true", want)
+		}
 	}
 }

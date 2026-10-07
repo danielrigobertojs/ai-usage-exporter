@@ -20,7 +20,7 @@ import (
 
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/model"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider"
-	"github.com/danielrigobertojs/ai-usage-exporter/internal/providers/opencode/testdata"
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider/opencode/testdata"
 )
 
 // TestDescriptorValid proves the descriptor this provider ships is

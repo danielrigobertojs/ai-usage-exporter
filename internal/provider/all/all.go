@@ -11,6 +11,8 @@ package all
 import (
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider/claudecode"
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider/codex"
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider/opencode"
 )
 
 // Registry returns every production provider, registered in a stable
@@ -20,6 +22,8 @@ func Registry() (*provider.Registry, error) {
 	reg := provider.NewRegistry()
 	providers := []provider.Provider{
 		claudecode.New(),
+		codex.New(),
+		opencode.New(),
 	}
 	for _, p := range providers {
 		if err := reg.Register(p); err != nil {
