@@ -74,6 +74,153 @@ func TestDiscoverSizeBudgetAndOrdering(t *testing.T) {
 	}
 }
 
+// TestDiscoverSQLiteExemptFromMaxBytesFile covers JCB-324 step 1: a
+// SourceSQLite candidate whose size exceeds MaxBytesFile must still come
+// back from Discover, never dropped into FilesSkipped. MaxBytesFile bounds
+// how much a streaming Parse reads sequentially; a SQLite source is opened
+// read-only and queried through indices instead, so the file's size is not
+// a cost that budget should police. A sparse file keeps this test fast and
+// CI-safe: only info.Size() needs to be large, not actual disk usage.
+func TestDiscoverSQLiteExemptFromMaxBytesFile(t *testing.T) {
+	mapFS := fstest.MapFS{
+		"home/user/.local/share/opencode/opencode.db": {
+			Data:    make([]byte, 300<<20), // 300 MiB > MaxBytesFile below
+			ModTime: mustParse(t, "2026-01-01T00:00:00Z"),
+		},
+	}
+	d := Descriptor{
+		ID:   "opencode",
+		Kind: SourceSQLite,
+		Roots: []RootSpec{
+			{Base: BaseXDGData, Rel: "opencode", Glob: "*.db"},
+		},
+	}
+	env := Env{GOOS: "linux", Home: "home/user", Getenv: func(string) string { return "" }, FS: mapFS}
+	budget := Budget{
+		Deadline:      time.Now().Add(time.Hour),
+		MaxFiles:      100,
+		MaxBytesFile:  256 << 20,
+		MaxTotalBytes: 4 << 30,
+	}
+
+	sources, stats, err := Discover(context.Background(), d, env, budget)
+	if err != nil {
+		t.Fatalf("Discover: unexpected error: %v", err)
+	}
+	if stats.FilesSkipped != 0 {
+		t.Errorf("FilesSkipped = %d, want 0 (SourceSQLite is exempt from MaxBytesFile)", stats.FilesSkipped)
+	}
+	if len(sources) != 1 {
+		t.Fatalf("len(sources) = %d, want 1", len(sources))
+	}
+	if sources[0].Kind != SourceSQLite {
+		t.Errorf("sources[0].Kind = %q, want %q", sources[0].Kind, SourceSQLite)
+	}
+}
+
+// TestDiscoverJSONLStillBoundedByMaxBytesFile covers JCB-324 step 2: the
+// SourceSQLite exemption must not weaken the streaming guard for the kind
+// it still protects. A SourceJSONL candidate of the very same oversized
+// size used above is still skipped.
+func TestDiscoverJSONLStillBoundedByMaxBytesFile(t *testing.T) {
+	mapFS := fstest.MapFS{
+		"home/user/.claude/projects/proj/big.jsonl": {
+			Data:    make([]byte, 300<<20),
+			ModTime: mustParse(t, "2026-01-01T00:00:00Z"),
+		},
+	}
+	d := Descriptor{
+		ID:   "claude-code",
+		Kind: SourceJSONL,
+		Roots: []RootSpec{
+			{Base: BaseHome, Rel: ".claude/projects", Glob: "*/*.jsonl"},
+		},
+	}
+	env := Env{GOOS: "linux", Home: "home/user", Getenv: func(string) string { return "" }, FS: mapFS}
+	budget := Budget{
+		Deadline:      time.Now().Add(time.Hour),
+		MaxFiles:      100,
+		MaxBytesFile:  256 << 20,
+		MaxTotalBytes: 4 << 30,
+	}
+
+	sources, stats, err := Discover(context.Background(), d, env, budget)
+	if err != nil {
+		t.Fatalf("Discover: unexpected error: %v", err)
+	}
+	if stats.FilesSkipped != 1 {
+		t.Errorf("FilesSkipped = %d, want 1 (JSONL stays bounded by MaxBytesFile)", stats.FilesSkipped)
+	}
+	if len(sources) != 0 {
+		t.Errorf("len(sources) = %d, want 0", len(sources))
+	}
+}
+
+// TestDiscoverSQLiteBytesExcludedFromMaxTotalBytes covers JCB-324 step 3:
+// a SourceSQLite candidate's bytes must not be counted against
+// MaxTotalBytes. MaxBytesFile is set far above either file's size here, so
+// only the MaxTotalBytes accounting is under test: a SQLite source whose
+// size alone would blow a tiny MaxTotalBytes budget still comes back
+// without tripping BudgetHit, while the JSONL regression case (same size,
+// same budget) still hits the cap - proving the exemption is specific to
+// SourceSQLite, not a general weakening of MaxTotalBytes.
+func TestDiscoverSQLiteBytesExcludedFromMaxTotalBytes(t *testing.T) {
+	huge := make([]byte, 300<<20) // way over MaxTotalBytes below
+	modTime := mustParse(t, "2026-01-01T00:00:00Z")
+	budget := Budget{
+		Deadline:      time.Now().Add(time.Hour),
+		MaxFiles:      100,
+		MaxBytesFile:  1 << 30, // large enough that this guard never fires here
+		MaxTotalBytes: 10,      // far smaller than the 300 MiB file
+	}
+
+	t.Run("sqlite is exempt", func(t *testing.T) {
+		mapFS := fstest.MapFS{"home/user/.local/share/opencode/opencode.db": {Data: huge, ModTime: modTime}}
+		d := Descriptor{
+			ID:   "opencode",
+			Kind: SourceSQLite,
+			Roots: []RootSpec{
+				{Base: BaseXDGData, Rel: "opencode", Glob: "*.db"},
+			},
+		}
+		env := Env{GOOS: "linux", Home: "home/user", Getenv: func(string) string { return "" }, FS: mapFS}
+
+		sources, stats, err := Discover(context.Background(), d, env, budget)
+		if err != nil {
+			t.Fatalf("Discover: unexpected error: %v", err)
+		}
+		if stats.BudgetHit {
+			t.Error("BudgetHit = true, want false (SQLite bytes don't count against MaxTotalBytes)")
+		}
+		if len(sources) != 1 {
+			t.Fatalf("len(sources) = %d, want 1", len(sources))
+		}
+	})
+
+	t.Run("jsonl of the same size still trips MaxTotalBytes", func(t *testing.T) {
+		mapFS := fstest.MapFS{"home/user/.claude/projects/proj/big.jsonl": {Data: huge, ModTime: modTime}}
+		d := Descriptor{
+			ID:   "claude-code",
+			Kind: SourceJSONL,
+			Roots: []RootSpec{
+				{Base: BaseHome, Rel: ".claude/projects", Glob: "*/*.jsonl"},
+			},
+		}
+		env := Env{GOOS: "linux", Home: "home/user", Getenv: func(string) string { return "" }, FS: mapFS}
+
+		sources, stats, err := Discover(context.Background(), d, env, budget)
+		if err != nil {
+			t.Fatalf("Discover: unexpected error: %v", err)
+		}
+		if !stats.BudgetHit {
+			t.Error("BudgetHit = false, want true (JSONL bytes still count against MaxTotalBytes)")
+		}
+		if len(sources) != 0 {
+			t.Errorf("len(sources) = %d, want 0", len(sources))
+		}
+	})
+}
+
 // TestDiscoverDeadlineExceeded covers step 7: a Budget whose Deadline has
 // already passed yields BudgetHit=true and a (possibly empty) partial list,
 // never an error.
