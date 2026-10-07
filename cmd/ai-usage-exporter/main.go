@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,7 +27,7 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] != "serve" {
+	if len(os.Args) > 1 && isCLICommand(os.Args[1]) {
 		os.Exit(cli.Execute(os.Args[1:], os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
@@ -36,6 +37,11 @@ func main() {
 		slog.Error("ai-usage-exporter: fatal", "error", err)
 		os.Exit(1)
 	}
+}
+
+// isCLICommand keeps flags on the historical default-serve path.
+func isCLICommand(first string) bool {
+	return first != "serve" && !strings.HasPrefix(first, "-")
 }
 
 // run is the minimal "serve" path: resolve config, scan every provider
