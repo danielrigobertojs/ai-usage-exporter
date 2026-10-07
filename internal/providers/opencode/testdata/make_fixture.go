@@ -55,6 +55,14 @@ type Message struct {
 //   - msg_5: invalid JSON, must be skipped without aborting the scan.
 //   - msg_6: role "user", must be excluded by the WHERE clause before
 //     m.data is ever decoded.
+//   - msg_7: nested reasoning>output (opencode-go/kimi-k2.5, redacted from
+//     msg_d6498c343002a4B11hEll2WOjs, JCB-323). Self-contradictory on
+//     origin: total == i+o+cr+cw says reasoning travels inside output, but
+//     reasoning(88) > output(85) says it does not fit. ADR-004 keeps the
+//     nested max(0, output-reasoning) branch anyway (lowest error bound of
+//     the two), so this record's five emitted classes sum to
+//     total+(reasoning-output), not total - the one documented exception
+//     to the per-record five-class invariant.
 var DefaultSessions = []Session{
 	{ID: "ses_alpha", Directory: "/home/user/projects/alpha"},
 	{ID: "ses_beta", Directory: "/home/user/projects/beta"},
@@ -97,6 +105,13 @@ var DefaultMessages = []Message{
 		ID: "msg_6", SessionID: "ses_alpha",
 		Data: `{"role":"user","time":{"created":1769550508409},"summary":{"diffs":[]},"agent":"build",` +
 			`"model":{"providerID":"openrouter","modelID":"moonshotai/kimi-k2:free"}}`,
+	},
+	{
+		ID: "msg_7", SessionID: "ses_alpha",
+		Data: `{"role":"assistant","time":{"created":1778360729384,"completed":1778360774215},` +
+			`"parentID":"msg_parent7","modelID":"kimi-k2.5","providerID":"opencode-go","mode":"build","agent":"build",` +
+			`"path":{"cwd":"REDACTED","root":"REDACTED"},"cost":0.0066421,` +
+			`"tokens":{"total":94158,"input":7289,"output":85,"reasoning":88,"cache":{"read":86784,"write":0}},"finish":"stop"}`,
 	},
 }
 
