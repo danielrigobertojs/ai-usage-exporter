@@ -28,7 +28,9 @@ import (
 // one extra scan, not one per signal.
 //
 // runRescanLoop blocks until ctx is done.
-func runRescanLoop(ctx context.Context, reg *provider.Registry, env provider.Env, newBudget func() provider.Budget, cfg config.Config, c *collector.Collector, trigger <-chan struct{}) {
+// onDecision and onComplete are test hooks. Production callers pass nil; tests
+// use them to synchronize on the atomic decision and when scanning becomes idle.
+func runRescanLoop(ctx context.Context, reg *provider.Registry, env provider.Env, newBudget func() provider.Budget, cfg config.Config, c *collector.Collector, trigger <-chan struct{}, onDecision func(dropped bool), onComplete func()) {
 	var tickCh <-chan time.Time
 	if cfg.ScanInterval > 0 {
 		ticker := time.NewTicker(cfg.ScanInterval)
@@ -40,10 +42,21 @@ func runRescanLoop(ctx context.Context, reg *provider.Registry, env provider.Env
 
 	rescan := func() {
 		if !scanning.CompareAndSwap(false, true) {
+			if onDecision != nil {
+				onDecision(true)
+			}
 			return
 		}
+		if onDecision != nil {
+			onDecision(false)
+		}
 		go func() {
-			defer scanning.Store(false)
+			defer func() {
+				scanning.Store(false)
+				if onComplete != nil {
+					onComplete()
+				}
+			}()
 
 			tz, err := cfg.Location()
 			if err != nil {
