@@ -4,6 +4,8 @@
 - Estado: Aceptado
 - Revisión: al añadir un provider nuevo, o si un provider upstream cambia el
   anidamiento de sus contadores
+- Actualizado 2026-10-07: la convención de OpenCode no es uniforme; ver la
+  evidencia de `opencode-go`/`kimi-k2.5` más abajo
 
 ## Contexto
 
@@ -36,7 +38,7 @@ Convenciones verificadas en origen, con la evidencia que las sostiene:
 | --- | --- | --- | --- |
 | Claude Code | disjunto en origen | n/a | campos nativos de la API en JSONL |
 | Codex | **anidado**: `cached_input_tokens` ⊂ `input_tokens` | **anidado**: `reasoning_output_tokens` ⊂ `output_tokens` | `event_msg`/`token_count`, acumulado por sesión |
-| OpenCode | disjunto en origen | disjunto en origen | `message.data`, delta por mensaje |
+| OpenCode | disjunto en origen | **depende del modelo**: disjunto en 8893/10015 registros, anidado (`reasoning` ⊂ `output`) en 1122/10015, todos ellos `opencode-go`/`kimi-k2.5` | `message.data`, delta por mensaje |
 
 Evidencia Codex, sobre 1919 registros `token_count` de 191 rollouts reales,
 sin contraejemplos: `total_tokens == input_tokens + output_tokens` en 1919/1919
@@ -44,11 +46,29 @@ con `cached_input_tokens > 0`, y `cached_input_tokens > input_tokens` en 0
 casos; `total_tokens == input_tokens + output_tokens` en 1913/1913 de los
 registros con `reasoning_output_tokens > 0`.
 
-Evidencia OpenCode, sobre 18.423 mensajes de asistente de una base real, con la
-aritmética explicada al 100 %: 8977 cumplen
-`total == input + output + cache.read + cache.write` (con `reasoning == 0`) y
-8893 cumplen `total == input + output + cache.read + cache.write + reasoning`.
-El anidamiento no ocurre nunca.
+Evidencia OpenCode, sobre los 18.423 mensajes de asistente de una base real,
+con la aritmética explicada al 100 % y sin un solo caso sin clasificar:
+
+```
+assistant_all                                      18423
+  sin campo tokens.total                             673
+  reasoning == 0,  total == i+o+cr+cw               7735
+  reasoning  > 0,  total == i+o+cr+cw+reasoning     8893   <- reasoning ADITIVO
+  reasoning  > 0,  total == i+o+cr+cw               1122   <- reasoning ANIDADO
+  sin explicar                                         0
+```
+
+Los 1122 registros anidados son **un solo par** provider/modelo,
+`opencode-go`/`kimi-k2.5`, y para ese par el anidamiento es determinista:
+1122/1122 de sus registros con `reasoning > 0` y `total` presente son
+anidados, 0 aditivos. Los otros tres providers de la base (`openai`,
+`opencode`, `omlx`) son aditivos en 7865/7865 de sus registros con
+`reasoning > 0`.
+
+De los 673 registros sin `tokens.total`, 533 son `opencode`/`grok-code` con
+`reasoning > 0` — un provider aditivo en todos sus registros medibles — y los
+140 restantes tienen `reasoning == 0`, donde la convención es indiferente. El
+default aditivo cuando falta `total` es por tanto correcto en los 673.
 
 Por tanto Codex **resta** y OpenCode **no**:
 
@@ -59,9 +79,22 @@ cache_read = Δcached_input_tokens
 output     = max(0, Δoutput_tokens - Δreasoning_output_tokens)
 reasoning  = Δreasoning_output_tokens
 
-# OpenCode: mapeo directo, sin restas
-input, output, reasoning, cache_read, cache_write = los cinco campos tal cual
+# OpenCode: mapeo directo salvo el anidamiento de reasoning, que se decide
+# por registro con la aritmetica que el propio registro declara
+nested := tokens.total presente && tokens.total == i + o + cache.read + cache.write && reasoning > 0
+input       = input
+cache_read  = cache.read
+cache_write = cache.write
+reasoning   = reasoning
+output      = nested ? max(0, output - reasoning) : output
 ```
+
+La regla de OpenCode se deriva del registro, no de una lista de modelos
+mantenida a mano: si `total` ya cuadra sin `reasoning`, entonces `reasoning`
+viaja dentro de `output` y hay que restarlo. Un modelo nuevo con la convencion
+anidada queda cubierto sin tocar codigo. Cuando `total` falta no hay senal, y
+el default es aditivo (no restar), que es la convencion de 7865/7865 registros
+de los providers aditivos.
 
 Codex no expone `cache_write`; se omite en lugar de emitirse como 0, para que
 la ausencia del dato se distinga de un valor medido de cero.
@@ -85,7 +118,12 @@ la ausencia del dato se distinga de un valor medido de cero.
 - Cada provider carga con un test de invariante obligatorio: la suma de las
   cinco clases emitidas debe igualar el total declarado por la herramienta
   para esa sesión. Es el único test que detecta el doble conteo, y es el que
-  faltaba en JCB-311 y JCB-312.
+  faltaba en JCB-311 y JCB-312. **En OpenCode el invariante se evalúa por
+  registro, no agregado**: el total declarado solo es reconciliable sabiendo
+  si ese registro es anidado o aditivo, y 673 registros no declaran `total`
+  en absoluto. Un test que sume todo y lo compare con la suma de `total`
+  falla sobre datos reales por 6,3 % de los registros, y "arreglarlo" con una
+  resta uniforme reintroduce el doble conteo en los otros 93,7 %.
 - Los fixtures de provider deben ser **extractos redactados de datos reales**,
   no sintéticos. Un fixture escrito desde la misma suposición que el parser no
   prueba nada; esa es la causa raíz de los dos defectos. Redactar significa
