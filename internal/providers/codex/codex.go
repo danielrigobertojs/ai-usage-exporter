@@ -2,8 +2,10 @@
 // Copyright (c) 2026 Daniel Rigoberto Jacobo Sandoval
 
 // Package codex implements provider.Provider for OpenAI Codex CLI rollouts.
-// See docs/providers/codex.md for the on-disk format and, in particular, the
-// cumulative-counter semantics delta.go exists to undo.
+// See docs/providers/codex.md for the on-disk format - in particular, why
+// usage travels in event_msg/token_count lines rather than the "turn" shape
+// an earlier version of this package assumed, and why delta.go undoes two
+// independent nestings, not one cumulative-vs-delta problem.
 package codex
 
 import (
@@ -12,8 +14,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/model"
@@ -21,11 +26,20 @@ import (
 )
 
 const toolID = "codex"
+const unknownModel = "unknown"
 
-// scannerBufferSize bounds a single JSONL line. Codex turn lines are small;
-// this only guards against a pathological line without risking an
-// allocation anywhere near the file's full size (rollouts run 700 MB-2 GB).
-const scannerBufferSize = 8 << 20
+// maxLineBytes bounds how much of a single JSONL line nextLine holds in
+// memory at once. Real rollouts carry turn_context lines with large nested
+// sandbox-policy payloads, but a line beyond even this cap is corrupt or
+// adversarial input, not a real session: it is discarded (and the rest of
+// the file still gets scanned) rather than grown into without bound.
+//
+// This mirrors internal/provider/claudecode's nextLine byte-for-byte rather
+// than importing it: that package belongs to a different in-flight issue
+// (JCB-315 owns extracting shared JSONL-reading helpers), and duplicating
+// ~30 lines beats taking a cross-package dependency on another issue's
+// unexported helper while both are mid-flight.
+const maxLineBytes = 8 << 20 // 8 MiB
 
 // New returns the Codex provider.
 func New() provider.Provider {
@@ -53,37 +67,90 @@ func (codexProvider) Descriptor() provider.Descriptor {
 	}
 }
 
-// sessionMetaLine is the first line of a well-formed rollout: the only place
-// the session id and cwd are recorded.
-type sessionMetaLine struct {
-	Type    string `json:"type"`
-	Payload struct {
-		ID  string `json:"id"`
-		Cwd string `json:"cwd"`
-	} `json:"payload"`
+// rolloutLine is the bounded shape every line in a Codex rollout decodes
+// into first. Payload stays raw until Type says which of the shapes below
+// applies - this is also what keeps prompt/tool content structurally
+// unreachable: only a handful of named leaf fields across all the payload
+// shapes below are ever decoded, and none of them is message text, a tool
+// argument, or a tool result.
+type rolloutLine struct {
+	Type      string          `json:"type"`
+	Timestamp string          `json:"timestamp"`
+	Payload   json.RawMessage `json:"payload"`
 }
 
-// turnLine is one turn event. LastInputTokens/LastOutputTokens/
-// LastCachedTokens/LastTotalTokens are cumulative totals for the session's
-// current context window, not deltas - see delta.go.
-type turnLine struct {
-	Type      string `json:"type"`
-	Timestamp string `json:"timestamp"`
-	Payload   struct {
-		ID               string `json:"id"`
-		Model            string `json:"model"`
-		LastInputTokens  int64  `json:"last_input_tokens"`
-		LastOutputTokens int64  `json:"last_output_tokens"`
-		LastCachedTokens int64  `json:"last_cached_tokens"`
-		LastTotalTokens  int64  `json:"last_total_tokens"`
-		ToolCalls        int64  `json:"tool_calls"`
-	} `json:"payload"`
+// sessionMetaPayload is the payload of the first line of a well-formed
+// rollout. Some files carry both id and session_id with the same value;
+// id wins when both are present.
+type sessionMetaPayload struct {
+	ID        string `json:"id"`
+	SessionID string `json:"session_id"`
+	Model     string `json:"model"`
+}
+
+// turnContextPayload carries the model in effect for the turns that follow
+// it. A rollout has one turn_context line per turn, so the model attached
+// to a token_count line is whichever turn_context was last seen before it.
+type turnContextPayload struct {
+	Model string `json:"model"`
+}
+
+// eventMsgPayload is the payload of an event_msg line. Only the
+// "token_count" sub-type carries usage; every other sub-type
+// (task_started, task_complete, thread_settings_applied, ...) is ignored.
+type eventMsgPayload struct {
+	Type string         `json:"type"`
+	Info tokenCountInfo `json:"info"`
+}
+
+// tokenCountInfo is the "info" object of a token_count event_msg.
+// last_token_usage is deliberately not decoded: it repeats the full
+// cumulative value verbatim on duplicate token_count emissions, so feeding
+// it to Tracker as if it were a delta would double-count the duplicated
+// turn. total_token_usage is the true session-wide running total and is
+// what Tracker is fed from - see delta.go.
+type tokenCountInfo struct {
+	TotalTokenUsage tokenUsage `json:"total_token_usage"`
+}
+
+// tokenUsage is OpenAI's cumulative usage shape. CachedInputTokens nests
+// inside InputTokens and ReasoningOutputTokens nests inside OutputTokens -
+// see docs/providers/codex.md for the evidence. A cache_write_input_tokens
+// field has been observed in real rollouts but is deliberately never
+// decoded: Codex has no cache-write concept of its own (every occurrence
+// observed is 0), and emitting a measured-looking 0 under
+// model.TokenCacheWrite would hide that this class is simply unavailable
+// for this provider, which is a different thing from a true zero.
+type tokenUsage struct {
+	InputTokens           int64 `json:"input_tokens"`
+	CachedInputTokens     int64 `json:"cached_input_tokens"`
+	OutputTokens          int64 `json:"output_tokens"`
+	ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
+	TotalTokens           int64 `json:"total_tokens"`
+}
+
+// responseItemPayload decodes only the type discriminator of a
+// response_item line, by design: counting tool calls never requires
+// looking at payload.name or payload.arguments, both of which can carry
+// real file paths and shell commands.
+type responseItemPayload struct {
+	Type string `json:"type"`
+}
+
+// toolCallResponseTypes are the response_item payload.type values that
+// represent a tool invocation worth counting toward ToolCalls.
+var toolCallResponseTypes = map[string]bool{
+	"function_call":    true,
+	"custom_tool_call": true,
+	"web_search_call":  true,
 }
 
 // Parse reads one Codex rollout (or archived_sessions) JSONL file in
-// streaming fashion and emits one UsageEvent per turn, with last_*
-// cumulative counters converted into per-turn deltas by a Tracker scoped to
-// this single file.
+// streaming fashion and emits one UsageEvent per token_count event_msg
+// line, with the session's cumulative total_token_usage converted into a
+// per-turn delta by a Tracker scoped to this single file, and that delta's
+// two nestings (cache-in-input, reasoning-in-output) undone before
+// emission. See docs/providers/codex.md.
 func (codexProvider) Parse(ctx context.Context, src provider.Source, emit func(model.UsageEvent) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -95,86 +162,162 @@ func (codexProvider) Parse(ctx context.Context, src provider.Source, emit func(m
 	}
 	defer f.Close()
 
-	sessionID := filepath.Base(src.Path)
+	sessionID := sessionIDFromFilename(src.Path)
+	currentModel := ""
+	pendingToolCalls := int64(0)
+	tokenCountIndex := 0
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), scannerBufferSize)
-
+	br := bufio.NewReaderSize(f, 64<<10)
 	tracker := NewTracker()
-	first := true
-	index := 0
 
-	for scanner.Scan() {
+	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
+		line, rerr := nextLine(br)
+		if line != nil {
+			var rl rolloutLine
+			if err := json.Unmarshal(line, &rl); err == nil {
+				switch rl.Type {
+				case "session_meta":
+					var p sessionMetaPayload
+					if err := json.Unmarshal(rl.Payload, &p); err == nil {
+						if p.ID != "" {
+							sessionID = p.ID
+						} else if p.SessionID != "" {
+							sessionID = p.SessionID
+						}
+						if p.Model != "" {
+							currentModel = p.Model
+						}
+					}
 
-		if first {
-			first = false
-			var meta sessionMetaLine
-			if err := json.Unmarshal(line, &meta); err == nil && meta.Type == "session_meta" && meta.Payload.ID != "" {
-				sessionID = meta.Payload.ID
-				continue
+				case "turn_context":
+					var p turnContextPayload
+					if err := json.Unmarshal(rl.Payload, &p); err == nil && p.Model != "" {
+						currentModel = p.Model
+					}
+
+				case "response_item":
+					var p responseItemPayload
+					if err := json.Unmarshal(rl.Payload, &p); err == nil && toolCallResponseTypes[p.Type] {
+						pendingToolCalls++
+					}
+
+				case "event_msg":
+					var p eventMsgPayload
+					if err := json.Unmarshal(rl.Payload, &p); err == nil && p.Type == "token_count" {
+						ts, terr := time.Parse(time.RFC3339, rl.Timestamp)
+						if terr == nil {
+							modelLabel := currentModel
+							if modelLabel == "" {
+								modelLabel = unknownModel
+							}
+
+							delta := tracker.Delta(Cumulative{
+								Input:           p.Info.TotalTokenUsage.InputTokens,
+								CachedInput:     p.Info.TotalTokenUsage.CachedInputTokens,
+								Output:          p.Info.TotalTokenUsage.OutputTokens,
+								ReasoningOutput: p.Info.TotalTokenUsage.ReasoningOutputTokens,
+								Total:           p.Info.TotalTokenUsage.TotalTokens,
+							})
+
+							evt := model.UsageEvent{
+								Key: model.EventKey{
+									Tool:      toolID,
+									SessionID: sessionID,
+									MessageID: strconv.Itoa(tokenCountIndex),
+								},
+								Tool:      toolID,
+								Model:     modelLabel,
+								Role:      "assistant",
+								Timestamp: ts.UTC(),
+								Tokens: map[model.TokenClass]int64{
+									model.TokenInput:     max(0, delta.Input-delta.CachedInput),
+									model.TokenCacheRead: delta.CachedInput,
+									model.TokenOutput:    max(0, delta.Output-delta.ReasoningOutput),
+									model.TokenReasoning: delta.ReasoningOutput,
+								},
+								ToolCalls: pendingToolCalls,
+							}
+
+							if err := emit(evt); err != nil {
+								return err
+							}
+
+							tokenCountIndex++
+							pendingToolCalls = 0
+						}
+					}
+
+				// "turn_context", "response_item" and "event_msg" are handled
+				// above; everything else (world_state, token_usage_record -
+				// one occurrence across the real rollouts this parser was
+				// verified against, negligible volume - and any future
+				// sub-type) is intentionally ignored rather than treated as
+				// an error.
+				default:
+				}
 			}
-			// Not a session_meta line (rollout_no_meta.jsonl, or a truncated
-			// first write): fall through and try to parse it as a turn.
 		}
 
-		var turn turnLine
-		if err := json.Unmarshal(line, &turn); err != nil {
-			// A malformed or truncated line is not fatal: skip it and keep
-			// scanning the rest of the file.
-			continue
-		}
-		if turn.Type != "turn" {
-			continue
-		}
-
-		ts, err := time.Parse(time.RFC3339, turn.Timestamp)
-		if err != nil {
-			continue
-		}
-
-		delta := tracker.Delta(Cumulative{
-			Input:  turn.Payload.LastInputTokens,
-			Output: turn.Payload.LastOutputTokens,
-			Cached: turn.Payload.LastCachedTokens,
-			Total:  turn.Payload.LastTotalTokens,
-		})
-
-		index++
-		messageID := turn.Payload.ID
-		if messageID == "" {
-			messageID = fmt.Sprintf("%s#%d", sessionID, index)
-		}
-
-		evt := model.UsageEvent{
-			Key: model.EventKey{
-				Tool:      toolID,
-				SessionID: sessionID,
-				MessageID: messageID,
-			},
-			Tool:      toolID,
-			Model:     turn.Payload.Model,
-			Role:      "assistant",
-			Timestamp: ts.UTC(),
-			Tokens: map[model.TokenClass]int64{
-				model.TokenInput:     delta.Input,
-				model.TokenOutput:    delta.Output,
-				model.TokenCacheRead: delta.Cached,
-			},
-			ToolCalls: turn.Payload.ToolCalls,
-		}
-
-		if err := emit(evt); err != nil {
-			return err
+		if rerr != nil {
+			if rerr == io.EOF {
+				return nil
+			}
+			return fmt.Errorf("codex: read %s: %w", src.Path, rerr)
 		}
 	}
+}
 
-	return scanner.Err()
+// sessionIDFromFilename falls back to the rollout file's own name (without
+// extension) when the file has no session_meta line, or its first line is
+// truncated or otherwise unreadable.
+func sessionIDFromFilename(srcPath string) string {
+	base := filepath.Base(srcPath)
+	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
+// nextLine reads one newline-terminated (or EOF-terminated) line from br,
+// with a trailing "\n"/"\r\n" stripped. A line longer than maxLineBytes is
+// still fully consumed from br - so the next call resumes at the following
+// line - but is reported back as a nil slice instead of being held in
+// memory: the caller treats nil with a nil error as "skip and keep going",
+// never as an error. err is nil while there is a line to return, io.EOF
+// once br is exhausted (possibly together with one final line that had no
+// trailing newline), or a genuine read error otherwise.
+func nextLine(br *bufio.Reader) (line []byte, err error) {
+	var buf []byte
+	oversized := false
+	for {
+		chunk, rerr := br.ReadSlice('\n')
+		if !oversized {
+			if len(buf)+len(chunk) > maxLineBytes {
+				oversized = true
+				buf = nil
+			} else {
+				buf = append(buf, chunk...)
+			}
+		}
+		switch rerr {
+		case nil:
+			if oversized {
+				return nil, nil
+			}
+			return bytes.TrimSuffix(bytes.TrimSuffix(buf, []byte("\n")), []byte("\r")), nil
+		case bufio.ErrBufferFull:
+			continue
+		case io.EOF:
+			if oversized {
+				return nil, io.EOF
+			}
+			if len(buf) == 0 {
+				return nil, io.EOF
+			}
+			return bytes.TrimSuffix(buf, []byte("\r")), io.EOF
+		default:
+			return nil, rerr
+		}
+	}
 }
