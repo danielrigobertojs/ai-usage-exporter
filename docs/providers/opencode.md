@@ -73,6 +73,21 @@ total, after any nesting subtraction; a record with no `total` has nothing
 to reconcile against and is excluded from the check rather than assumed to
 pass or fail it.
 
+**One documented, bounded exception to that invariant exists.** Of the
+1,122 nested records, 6 declare `reasoning > output` - self-contradictory on
+origin, since the same record's arithmetic says `reasoning` both fits inside
+`output` (`total == i+o+cr+cw`) and is larger than it. OpenCode does not
+derive the two counters from the same source for these, so neither branch of
+the formula above reconciles them; `max(0, output - reasoning)` is kept
+because it has the lower error bound of the two measured. See [ADR-004's
+error-bound table](../adr/0004-token-class-normalization.md#los-6-registros-aritmeticamente-contradictorios)
+for the measured cost of each alternative. For these 6 records only, the
+five emitted classes sum to `total + (reasoning - output)`, not `total` -
+fixed in the test fixture as `msg_7` (`internal/providers/opencode/testdata/make_fixture.go`,
+redacted from `msg_d6498c343002a4B11hEll2WOjs`) so `TestParseFiveClassInvariant`
+exercises this case explicitly instead of it disappearing silently if the
+fixture ever loses it.
+
 The native `cost` field is decoded but currently has nowhere to go:
 `model.UsageEvent` carries no cost field yet, and extending that struct is
 outside this provider's scope. Reconciling native cost against the pricing

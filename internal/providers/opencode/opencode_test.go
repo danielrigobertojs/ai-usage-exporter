@@ -68,7 +68,7 @@ func parseAll(t *testing.T, path string) []model.UsageEvent {
 }
 
 // TestParseEmitsOnlyAssistantMessages covers step 4: Parse over the fixture
-// emits exactly the 4 assistant-role events (the 1 user-role message and the
+// emits exactly the 5 assistant-role events (the 1 user-role message and the
 // 1 invalid-JSON message are excluded), each with the right SessionID,
 // Model, ProjectID and all five TokenClass values - msg_2's Output already
 // has its nested reasoning subtracted (33 - 22 = 11), per ADR-004.
@@ -76,9 +76,9 @@ func TestParseEmitsOnlyAssistantMessages(t *testing.T) {
 	events := parseAll(t, buildFixture(t))
 
 	// msg_5 (session ses_beta) is invalid JSON and msg_6 (session ses_alpha)
-	// is role "user", so only 4 of the 6 fixture rows survive as events.
-	if len(events) != 4 {
-		t.Fatalf("len(events) = %d, want 4", len(events))
+	// is role "user", so only 5 of the 7 fixture rows survive as events.
+	if len(events) != 5 {
+		t.Fatalf("len(events) = %d, want 5", len(events))
 	}
 
 	byID := make(map[string]model.UsageEvent, len(events))
@@ -118,6 +118,13 @@ func TestParseEmitsOnlyAssistantMessages(t *testing.T) {
 			tokens: map[model.TokenClass]int64{
 				model.TokenInput: 200, model.TokenOutput: 75,
 				model.TokenCacheRead: 0, model.TokenCacheWrite: 0, model.TokenReasoning: 0,
+			},
+		},
+		"msg_7": { // opencode-go/kimi-k2.5, nested with reasoning(88) > output(85): clamped to 0.
+			sessionID: "ses_alpha", model: "kimi-k2.5", projectID: "/home/user/projects/alpha",
+			tokens: map[model.TokenClass]int64{
+				model.TokenInput: 7289, model.TokenOutput: 0,
+				model.TokenCacheRead: 86784, model.TokenCacheWrite: 0, model.TokenReasoning: 88,
 			},
 		},
 	}
@@ -194,6 +201,18 @@ func TestParseSchemaTolerance(t *testing.T) {
 // tokens.total declared (msg_3) has nothing to reconcile against and must
 // be skipped, not treated as satisfying or violating the invariant.
 //
+// ADR-004 documents one bounded exception, found on 6/18,423 real records
+// and fixed here as msg_7: a nested record (raw total == i+o+cr+cw) whose
+// raw reasoning exceeds its raw output is self-contradictory in the source
+// data (reasoning can't be both inside output and larger than it), and the
+// kept max(0, output-reasoning) branch leaves that record's five emitted
+// classes summing to total+(reasoning-output), not total - the smallest of
+// the two error bounds ADR-004 measured, not a reconciliation. The expected
+// sum below is derived independently from each record's own raw JSON, never
+// from calling reasoningNested or Parse's output math, so this test cannot
+// be satisfied by coincidentally mirroring the implementation it's meant to
+// check.
+//
 // This is deliberately not an aggregate check: summing every event's tokens
 // and comparing against the sum of every record's total would fail on real
 // data for the 1122/18423 nested records (6.3%) once a correct per-record
@@ -202,38 +221,49 @@ func TestParseSchemaTolerance(t *testing.T) {
 func TestParseFiveClassInvariant(t *testing.T) {
 	path := buildFixture(t)
 
-	raw := make(map[string]struct {
-		total   *int64
-		hasData bool
-	})
+	type rawRecord struct {
+		hasData                                  bool
+		total                                    *int64
+		input, output, cacheR, cacheW, reasoning int64
+	}
+	raw := make(map[string]rawRecord)
 	db, err := sql.Open("sqlite", DSN(path))
 	if err != nil {
 		t.Fatalf("open fixture for raw totals: %v", err)
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT m.id, json_extract(m.data, '$.tokens.total') FROM message m WHERE json_valid(m.data) AND json_extract(m.data, '$.role') = 'assistant'`)
+	rows, err := db.Query(`
+SELECT m.id,
+       json_extract(m.data, '$.tokens.total'),
+       json_extract(m.data, '$.tokens.input'),
+       json_extract(m.data, '$.tokens.output'),
+       json_extract(m.data, '$.tokens.cache.read'),
+       json_extract(m.data, '$.tokens.cache.write'),
+       json_extract(m.data, '$.tokens.reasoning')
+FROM message m WHERE json_valid(m.data) AND json_extract(m.data, '$.role') = 'assistant'`)
 	if err != nil {
 		t.Fatalf("query raw totals: %v", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id string
-		var total sql.NullInt64
-		if err := rows.Scan(&id, &total); err != nil {
-			t.Fatalf("scan raw total: %v", err)
+		var total, input, output, cacheR, cacheW, reasoning sql.NullInt64
+		if err := rows.Scan(&id, &total, &input, &output, &cacheR, &cacheW, &reasoning); err != nil {
+			t.Fatalf("scan raw record: %v", err)
+		}
+		r := rawRecord{
+			hasData:   true,
+			input:     input.Int64,
+			output:    output.Int64,
+			cacheR:    cacheR.Int64,
+			cacheW:    cacheW.Int64,
+			reasoning: reasoning.Int64,
 		}
 		if total.Valid {
 			v := total.Int64
-			raw[id] = struct {
-				total   *int64
-				hasData bool
-			}{total: &v, hasData: true}
-		} else {
-			raw[id] = struct {
-				total   *int64
-				hasData bool
-			}{hasData: true}
+			r.total = &v
 		}
+		raw[id] = r
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate raw totals: %v", err)
@@ -241,6 +271,7 @@ func TestParseFiveClassInvariant(t *testing.T) {
 
 	checked := 0
 	skipped := 0
+	nestedExceptions := 0
 	for _, e := range parseAll(t, path) {
 		r, ok := raw[e.Key.MessageID]
 		if !ok || !r.hasData || r.total == nil {
@@ -250,8 +281,19 @@ func TestParseFiveClassInvariant(t *testing.T) {
 		sum := e.Tokens[model.TokenInput] + e.Tokens[model.TokenOutput] +
 			e.Tokens[model.TokenCacheRead] + e.Tokens[model.TokenCacheWrite] +
 			e.Tokens[model.TokenReasoning]
-		if sum != *r.total {
-			t.Errorf("%s: sum of five classes = %d, want declared total %d", e.Key.MessageID, sum, *r.total)
+
+		want := *r.total
+		nested := r.total != nil && *r.total == r.input+r.output+r.cacheR+r.cacheW && r.reasoning > 0
+		if nested && r.reasoning > r.output {
+			// ADR-004's documented, bounded exception: the raw record is
+			// self-contradictory, so the five emitted classes sum to
+			// total+(reasoning-output), not total.
+			want = *r.total + (r.reasoning - r.output)
+			nestedExceptions++
+		}
+
+		if sum != want {
+			t.Errorf("%s: sum of five classes = %d, want %d", e.Key.MessageID, sum, want)
 		}
 		checked++
 	}
@@ -261,6 +303,33 @@ func TestParseFiveClassInvariant(t *testing.T) {
 	}
 	if skipped == 0 {
 		t.Fatal("fixture has no message without tokens.total; the no-total skip path is untested")
+	}
+	if nestedExceptions == 0 {
+		t.Fatal("fixture has no nested record with reasoning > output (ADR-004's documented exception); the exception path is untested")
+	}
+}
+
+// TestParseNestedReasoningExceedsOutputClamps pins the clamp ADR-004 keeps
+// for the 6 self-contradictory real records (fixed here as msg_7): when a
+// nested record's raw reasoning(88) exceeds its raw output(85), Output must
+// be exactly 0, never negative. A future change that replaces max(0, ...)
+// with an unbounded subtraction - the "additive" alternative ADR-004 rejects
+// as 27x worse - would emit Output = -3 here instead, and this test exists
+// to catch exactly that regression.
+func TestParseNestedReasoningExceedsOutputClamps(t *testing.T) {
+	events := parseAll(t, buildFixture(t))
+
+	var got *model.UsageEvent
+	for i := range events {
+		if events[i].Key.MessageID == "msg_7" {
+			got = &events[i]
+		}
+	}
+	if got == nil {
+		t.Fatal("msg_7 not found among emitted events")
+	}
+	if got.Tokens[model.TokenOutput] != 0 {
+		t.Errorf("msg_7 Tokens[output] = %d, want 0 (clamped)", got.Tokens[model.TokenOutput])
 	}
 }
 
