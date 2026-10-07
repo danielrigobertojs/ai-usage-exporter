@@ -103,7 +103,7 @@ func run() error {
 		}
 	}()
 
-	go runRescanLoop(ctx, reg, env, newBudget, cfg, c, trigger)
+	go runRescanLoop(ctx, reg, env, newBudget, cfg, c, trigger, nil, nil)
 
 	errCh := make(chan error, 1)
 	go func() {
