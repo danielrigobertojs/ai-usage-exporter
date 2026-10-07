@@ -67,10 +67,23 @@ func DSN(path string) string {
 	return "file:" + path + "?mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(2000)"
 }
 
+// message.role is not a column: OpenCode's `message` table is just
+// (id, session_id, time_created, time_updated, data), and role lives inside
+// the data JSON blob like everything else. Filtering on m.role instead of
+// json_extract(m.data, '$.role') is a SQLite "no such column" error on every
+// real database - see docs/providers/opencode.md.
+//
+// json_valid(m.data) must come first: SQLite short-circuits AND, and
+// json_extract raises "malformed JSON" instead of returning NULL when data
+// isn't valid JSON at all. Without the guard, one corrupt row would abort
+// the query for every row instead of just being excluded by this filter -
+// it still gets a second, Go-level skip in the row loop below, since a row
+// can be valid JSON and still not decode into messageData the way Parse
+// expects.
 const query = `
 SELECT m.id, m.session_id, m.data, s.directory
 FROM message m JOIN session s ON s.id = m.session_id
-WHERE m.role = 'assistant'
+WHERE json_valid(m.data) AND json_extract(m.data, '$.role') = 'assistant'
 ORDER BY m.id`
 
 // messageData is the narrow slice of OpenCode's message.data JSON this
@@ -85,8 +98,14 @@ type messageData struct {
 		Created int64 `json:"created"`
 	} `json:"time"`
 	Tokens struct {
-		Input  int64 `json:"input"`
-		Output int64 `json:"output"`
+		// Total is a pointer because its absence (673/18423 real assistant
+		// records) and its presence-as-zero are different signals: absence
+		// means "no arithmetic to check reasoningNested against", so the
+		// nesting decision must default to additive rather than compare
+		// against a fabricated 0.
+		Total  *int64 `json:"total"`
+		Input  int64  `json:"input"`
+		Output int64  `json:"output"`
 		Cache  struct {
 			Read  int64 `json:"read"`
 			Write int64 `json:"write"`
@@ -94,6 +113,22 @@ type messageData struct {
 		Reasoning int64 `json:"reasoning"`
 	} `json:"tokens"`
 	Cost float64 `json:"cost"`
+}
+
+// reasoningNested reports whether this record's own arithmetic shows
+// reasoning tokens counted twice: once inside tokens.output and once inside
+// tokens.reasoning. Per ADR-004, OpenCode does not use one convention across
+// models - opencode-go/kimi-k2.5 nests reasoning inside output, every other
+// provider/model pair observed on real data is additive - so the decision
+// is derived from the record's own declared total, never a hardcoded model
+// list. When total is absent there is no arithmetic to check, and the
+// default is additive (false): 533/673 such records are reasoning>0 rows
+// from opencode/grok-code, an additive pair in every record that does
+// declare a total, and the remaining 140 have reasoning == 0 where the
+// convention makes no difference.
+func (d messageData) reasoningNested() bool {
+	t := d.Tokens
+	return t.Total != nil && *t.Total == t.Input+t.Output+t.Cache.Read+t.Cache.Write && t.Reasoning > 0
 }
 
 // Parse reads a single opencode.db Source read-only and emits one
@@ -132,6 +167,11 @@ func (openCodeProvider) Parse(ctx context.Context, src provider.Source, emit fun
 			continue
 		}
 
+		output := md.Tokens.Output
+		if md.reasoningNested() {
+			output = max(0, output-md.Tokens.Reasoning)
+		}
+
 		evt := model.UsageEvent{
 			Key: model.EventKey{
 				Tool:      toolID,
@@ -145,7 +185,7 @@ func (openCodeProvider) Parse(ctx context.Context, src provider.Source, emit fun
 			Timestamp: time.UnixMilli(md.Time.Created).UTC(),
 			Tokens: map[model.TokenClass]int64{
 				model.TokenInput:      md.Tokens.Input,
-				model.TokenOutput:     md.Tokens.Output,
+				model.TokenOutput:     output,
 				model.TokenCacheRead:  md.Tokens.Cache.Read,
 				model.TokenCacheWrite: md.Tokens.Cache.Write,
 				model.TokenReasoning:  md.Tokens.Reasoning,

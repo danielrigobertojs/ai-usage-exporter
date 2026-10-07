@@ -26,19 +26,35 @@ type Session struct {
 }
 
 // Message describes one fixture row for the `message` table. Data is the
-// raw JSON stored in message.data; Role is usually "assistant" or "user".
+// raw JSON stored in message.data, including its "role" field - the real
+// `message` table has no role column (see Build's schema), so every
+// fixture row's role, like a real row's, lives only inside Data.
 type Message struct {
 	ID        string
 	SessionID string
-	Role      string
 	Data      string
 }
 
-// DefaultSessions and DefaultMessages are the two sessions and six messages
-// (five assistant, one user) JCB-312 step 1 asks for: realistic token and
-// cost JSON, one message missing tokens.cache entirely (schema-tolerance),
-// one with invalid JSON (skip-don't-abort), and a sentinel prompt string
-// that must never reach an emitted event.
+// DefaultSessions and DefaultMessages are redacted extracts of real
+// opencode.db rows (JCB-322): path.cwd, path.root and summary content are
+// replaced with "REDACTED", but role, modelID, providerID, time.created,
+// cost and the full tokens block are kept verbatim so the fixture exercises
+// the same arithmetic a real database would. A fixture built from a made-up
+// schema is exactly how JCB-322's bug (filtering on a m.role column that
+// does not exist) and ADR-004's bug (assuming reasoning is always additive)
+// both slipped past green tests in PR #8.
+//
+// Required cases, each traceable to a real row:
+//   - msg_1: additive reasoning>0 (opencode/nemotron-3-super-free).
+//   - msg_2: nested reasoning>0, the opencode-go/kimi-k2.5 pattern that
+//     ADR-004 documents as the one non-additive pair on real data. Its
+//     path.cwd carries the sentinel string, not "REDACTED", so this message
+//     doubles as the proof that Parse never decodes path.cwd into an event.
+//   - msg_3: no tokens.total at all (673/18423 real assistant rows).
+//   - msg_4: tokens.cache missing entirely (schema tolerance).
+//   - msg_5: invalid JSON, must be skipped without aborting the scan.
+//   - msg_6: role "user", must be excluded by the WHERE clause before
+//     m.data is ever decoded.
 var DefaultSessions = []Session{
 	{ID: "ses_alpha", Directory: "/home/user/projects/alpha"},
 	{ID: "ses_beta", Directory: "/home/user/projects/beta"},
@@ -46,40 +62,55 @@ var DefaultSessions = []Session{
 
 var DefaultMessages = []Message{
 	{
-		ID: "msg_1", SessionID: "ses_alpha", Role: "assistant",
-		Data: `{"modelID":"claude-sonnet-4-5","providerID":"anthropic","time":{"created":1733097600000},` +
-			`"tokens":{"input":100,"output":50,"cache":{"read":10,"write":5},"reasoning":0},` +
-			`"cost":0.0123,"text":"SENTINEL-PROMPT-TEXT"}`,
+		ID: "msg_1", SessionID: "ses_alpha",
+		Data: `{"parentID":"msg_parent1","role":"assistant","mode":"plan","agent":"plan",` +
+			`"path":{"cwd":"REDACTED","root":"REDACTED"},"cost":0,` +
+			`"tokens":{"total":96583,"input":95189,"output":934,"reasoning":460,"cache":{"write":0,"read":0}},` +
+			`"modelID":"nemotron-3-super-free","providerID":"opencode",` +
+			`"time":{"created":1777486305093,"completed":1777486398749},"finish":"stop"}`,
 	},
 	{
-		ID: "msg_2", SessionID: "ses_alpha", Role: "assistant",
-		Data: `{"modelID":"claude-sonnet-4-5","providerID":"anthropic","time":{"created":1733097660000},` +
-			`"tokens":{"input":200,"output":75,"reasoning":3},` +
-			`"cost":0.0245,"text":"SENTINEL-PROMPT-TEXT"}`,
+		ID: "msg_2", SessionID: "ses_alpha",
+		Data: `{"role":"assistant","time":{"created":1772667137548,"completed":1772667141332},` +
+			`"parentID":"msg_parent2","modelID":"kimi-k2.5","providerID":"opencode-go","mode":"build","agent":"build",` +
+			`"path":{"cwd":"SENTINEL-PROMPT-TEXT","root":"REDACTED"},"cost":0.0058876,` +
+			`"tokens":{"total":9784,"input":9495,"output":33,"reasoning":22,"cache":{"read":256,"write":0}},"finish":"stop"}`,
 	},
 	{
-		ID: "msg_3", SessionID: "ses_beta", Role: "assistant",
-		Data: `{"modelID":"gpt-5-codex","providerID":"openai","time":{"created":1733101200000},` +
-			`"tokens":{"input":300,"output":120,"cache":{"read":40,"write":0},"reasoning":10},` +
-			`"cost":0.0510,"text":"SENTINEL-PROMPT-TEXT"}`,
+		ID: "msg_3", SessionID: "ses_beta",
+		Data: `{"role":"assistant","time":{"created":1769550508420,"completed":1769550508742},` +
+			`"parentID":"msg_parent3","modelID":"moonshotai/kimi-k2:free","providerID":"openrouter",` +
+			`"mode":"build","agent":"build","path":{"cwd":"REDACTED","root":"REDACTED"},"cost":0,` +
+			`"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}`,
 	},
 	{
-		ID: "msg_4", SessionID: "ses_beta", Role: "assistant",
+		ID: "msg_4", SessionID: "ses_beta",
+		Data: `{"role":"assistant","time":{"created":1733097660000},"modelID":"claude-sonnet-4-5",` +
+			`"providerID":"anthropic","path":{"cwd":"REDACTED","root":"REDACTED"},"cost":0.0245,` +
+			`"tokens":{"input":200,"output":75,"reasoning":0}}`,
+	},
+	{
+		ID: "msg_5", SessionID: "ses_beta",
 		Data: `not valid json {{{`,
 	},
 	{
-		ID: "msg_5", SessionID: "ses_beta", Role: "assistant",
-		Data: `{"modelID":"gpt-5-codex","providerID":"openai","time":{"created":1733101260000},` +
-			`"tokens":{"input":15,"output":5},"cost":0.001,"text":"SENTINEL-PROMPT-TEXT"}`,
-	},
-	{
-		ID: "msg_6", SessionID: "ses_alpha", Role: "user",
-		Data: `{"text":"SENTINEL-PROMPT-TEXT"}`,
+		ID: "msg_6", SessionID: "ses_alpha",
+		Data: `{"role":"user","time":{"created":1769550508409},"summary":{"diffs":[]},"agent":"build",` +
+			`"model":{"providerID":"openrouter","modelID":"moonshotai/kimi-k2:free"}}`,
 	},
 }
 
 // Build creates opencode.db under dir with the `session` and `message`
 // tables populated from sessions and messages, and returns its full path.
+//
+// The `message` CREATE TABLE below is copied verbatim from the `.schema
+// message` output of a real opencode.db, FK and index included: it has no
+// `role` column, because role lives inside the data JSON like every other
+// field this provider reads. JCB-322's bug - WHERE m.role = 'assistant',
+// a query that errors with "no such column: m.role" on every real
+// database - passed PR #8's tests only because that fixture invented a
+// role column that does not exist. If this schema ever grows a role
+// column again, it has drifted from reality the same way.
 func Build(dir string, sessions []Session, messages []Message) (string, error) {
 	path := filepath.Join(dir, "opencode.db")
 
@@ -89,17 +120,20 @@ func Build(dir string, sessions []Session, messages []Message) (string, error) {
 	}
 	defer db.Close()
 
-	const schema = `
-CREATE TABLE session (
-	id        TEXT PRIMARY KEY,
-	directory TEXT NOT NULL
-);
-CREATE TABLE message (
-	id         TEXT PRIMARY KEY,
-	session_id TEXT NOT NULL,
-	role       TEXT NOT NULL,
-	data       TEXT NOT NULL
-);`
+	const schema = "" +
+		"CREATE TABLE session (\n" +
+		"\tid        TEXT PRIMARY KEY,\n" +
+		"\tdirectory TEXT NOT NULL\n" +
+		");\n" +
+		"CREATE TABLE `message` (\n" +
+		"\t`id` text PRIMARY KEY,\n" +
+		"\t`session_id` text NOT NULL,\n" +
+		"\t`time_created` integer NOT NULL,\n" +
+		"\t`time_updated` integer NOT NULL,\n" +
+		"\t`data` text NOT NULL,\n" +
+		"\tCONSTRAINT `fk_message_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n" +
+		");\n" +
+		"CREATE INDEX `message_session_time_created_id_idx` ON `message` (`session_id`,`time_created`,`id`);"
 	if _, err := db.Exec(schema); err != nil {
 		return "", fmt.Errorf("testdata: create schema: %w", err)
 	}
@@ -111,8 +145,8 @@ CREATE TABLE message (
 	}
 	for _, m := range messages {
 		if _, err := db.Exec(
-			`INSERT INTO message (id, session_id, role, data) VALUES (?, ?, ?, ?)`,
-			m.ID, m.SessionID, m.Role, m.Data,
+			`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, 0, 0, ?)`,
+			m.ID, m.SessionID, m.Data,
 		); err != nil {
 			return "", fmt.Errorf("testdata: insert message %s: %w", m.ID, err)
 		}

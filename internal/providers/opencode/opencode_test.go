@@ -68,14 +68,15 @@ func parseAll(t *testing.T, path string) []model.UsageEvent {
 }
 
 // TestParseEmitsOnlyAssistantMessages covers step 4: Parse over the fixture
-// emits exactly the 5 assistant-role events (the 1 user-role message and the
+// emits exactly the 4 assistant-role events (the 1 user-role message and the
 // 1 invalid-JSON message are excluded), each with the right SessionID,
-// Model, ProjectID and all five TokenClass values.
+// Model, ProjectID and all five TokenClass values - msg_2's Output already
+// has its nested reasoning subtracted (33 - 22 = 11), per ADR-004.
 func TestParseEmitsOnlyAssistantMessages(t *testing.T) {
 	events := parseAll(t, buildFixture(t))
 
-	// msg_4 (session ses_beta) is invalid JSON and must be skipped, so only
-	// 4 of the 5 assistant rows in the fixture survive as events.
+	// msg_5 (session ses_beta) is invalid JSON and msg_6 (session ses_alpha)
+	// is role "user", so only 4 of the 6 fixture rows survive as events.
 	if len(events) != 4 {
 		t.Fatalf("len(events) = %d, want 4", len(events))
 	}
@@ -91,31 +92,31 @@ func TestParseEmitsOnlyAssistantMessages(t *testing.T) {
 		projectID string
 		tokens    map[model.TokenClass]int64
 	}{
-		"msg_1": {
-			sessionID: "ses_alpha", model: "claude-sonnet-4-5", projectID: "/home/user/projects/alpha",
+		"msg_1": { // opencode/nemotron-3-super-free, additive reasoning>0.
+			sessionID: "ses_alpha", model: "nemotron-3-super-free", projectID: "/home/user/projects/alpha",
 			tokens: map[model.TokenClass]int64{
-				model.TokenInput: 100, model.TokenOutput: 50,
-				model.TokenCacheRead: 10, model.TokenCacheWrite: 5, model.TokenReasoning: 0,
+				model.TokenInput: 95189, model.TokenOutput: 934,
+				model.TokenCacheRead: 0, model.TokenCacheWrite: 0, model.TokenReasoning: 460,
 			},
 		},
-		"msg_2": {
-			sessionID: "ses_alpha", model: "claude-sonnet-4-5", projectID: "/home/user/projects/alpha",
+		"msg_2": { // opencode-go/kimi-k2.5, nested: Output = 33 - 22 = 11.
+			sessionID: "ses_alpha", model: "kimi-k2.5", projectID: "/home/user/projects/alpha",
+			tokens: map[model.TokenClass]int64{
+				model.TokenInput: 9495, model.TokenOutput: 11,
+				model.TokenCacheRead: 256, model.TokenCacheWrite: 0, model.TokenReasoning: 22,
+			},
+		},
+		"msg_3": { // no tokens.total at all; defaults to additive (no-op).
+			sessionID: "ses_beta", model: "moonshotai/kimi-k2:free", projectID: "/home/user/projects/beta",
+			tokens: map[model.TokenClass]int64{
+				model.TokenInput: 0, model.TokenOutput: 0,
+				model.TokenCacheRead: 0, model.TokenCacheWrite: 0, model.TokenReasoning: 0,
+			},
+		},
+		"msg_4": { // tokens.cache missing entirely; schema tolerance.
+			sessionID: "ses_beta", model: "claude-sonnet-4-5", projectID: "/home/user/projects/beta",
 			tokens: map[model.TokenClass]int64{
 				model.TokenInput: 200, model.TokenOutput: 75,
-				model.TokenCacheRead: 0, model.TokenCacheWrite: 0, model.TokenReasoning: 3,
-			},
-		},
-		"msg_3": {
-			sessionID: "ses_beta", model: "gpt-5-codex", projectID: "/home/user/projects/beta",
-			tokens: map[model.TokenClass]int64{
-				model.TokenInput: 300, model.TokenOutput: 120,
-				model.TokenCacheRead: 40, model.TokenCacheWrite: 0, model.TokenReasoning: 10,
-			},
-		},
-		"msg_5": {
-			sessionID: "ses_beta", model: "gpt-5-codex", projectID: "/home/user/projects/beta",
-			tokens: map[model.TokenClass]int64{
-				model.TokenInput: 15, model.TokenOutput: 5,
 				model.TokenCacheRead: 0, model.TokenCacheWrite: 0, model.TokenReasoning: 0,
 			},
 		},
@@ -165,23 +166,101 @@ func keysOf[V any](m map[string]V) []string {
 
 // TestParseSchemaTolerance covers step 6: a message whose data has no
 // tokens.cache object at all still emits an event with CacheRead/CacheWrite
-// == 0 and no error (msg_2), and an invalid-JSON row is skipped while the
-// rest of the file keeps parsing (msg_4, already exercised by the count in
+// == 0 and no error (msg_4), and an invalid-JSON row is skipped while the
+// rest of the file keeps parsing (msg_5, already exercised by the count in
 // TestParseEmitsOnlyAssistantMessages).
 func TestParseSchemaTolerance(t *testing.T) {
 	events := parseAll(t, buildFixture(t))
 
 	var got *model.UsageEvent
 	for i := range events {
-		if events[i].Key.MessageID == "msg_2" {
+		if events[i].Key.MessageID == "msg_4" {
 			got = &events[i]
 		}
 	}
 	if got == nil {
-		t.Fatal("msg_2 not found among emitted events")
+		t.Fatal("msg_4 not found among emitted events")
 	}
 	if got.Tokens[model.TokenCacheRead] != 0 || got.Tokens[model.TokenCacheWrite] != 0 {
-		t.Errorf("msg_2 Tokens = %+v, want CacheRead/CacheWrite == 0", got.Tokens)
+		t.Errorf("msg_4 Tokens = %+v, want CacheRead/CacheWrite == 0", got.Tokens)
+	}
+}
+
+// TestParseFiveClassInvariant is the per-record invariant ADR-004 requires
+// for OpenCode: for every emitted event whose source record declared
+// tokens.total, the five emitted classes must sum to exactly that total -
+// in the additive case directly, and in the nested case only after Output
+// has already had Reasoning subtracted out by Parse. A record with no
+// tokens.total declared (msg_3) has nothing to reconcile against and must
+// be skipped, not treated as satisfying or violating the invariant.
+//
+// This is deliberately not an aggregate check: summing every event's tokens
+// and comparing against the sum of every record's total would fail on real
+// data for the 1122/18423 nested records (6.3%) once a correct per-record
+// subtraction is in place, because the aggregate total still includes the
+// reasoning tokens the per-record total already accounted for once.
+func TestParseFiveClassInvariant(t *testing.T) {
+	path := buildFixture(t)
+
+	raw := make(map[string]struct {
+		total   *int64
+		hasData bool
+	})
+	db, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatalf("open fixture for raw totals: %v", err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT m.id, json_extract(m.data, '$.tokens.total') FROM message m WHERE json_valid(m.data) AND json_extract(m.data, '$.role') = 'assistant'`)
+	if err != nil {
+		t.Fatalf("query raw totals: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var total sql.NullInt64
+		if err := rows.Scan(&id, &total); err != nil {
+			t.Fatalf("scan raw total: %v", err)
+		}
+		if total.Valid {
+			v := total.Int64
+			raw[id] = struct {
+				total   *int64
+				hasData bool
+			}{total: &v, hasData: true}
+		} else {
+			raw[id] = struct {
+				total   *int64
+				hasData bool
+			}{hasData: true}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate raw totals: %v", err)
+	}
+
+	checked := 0
+	skipped := 0
+	for _, e := range parseAll(t, path) {
+		r, ok := raw[e.Key.MessageID]
+		if !ok || !r.hasData || r.total == nil {
+			skipped++
+			continue
+		}
+		sum := e.Tokens[model.TokenInput] + e.Tokens[model.TokenOutput] +
+			e.Tokens[model.TokenCacheRead] + e.Tokens[model.TokenCacheWrite] +
+			e.Tokens[model.TokenReasoning]
+		if sum != *r.total {
+			t.Errorf("%s: sum of five classes = %d, want declared total %d", e.Key.MessageID, sum, *r.total)
+		}
+		checked++
+	}
+
+	if checked == 0 {
+		t.Fatal("no events had a declared tokens.total to check the invariant against")
+	}
+	if skipped == 0 {
+		t.Fatal("fixture has no message without tokens.total; the no-total skip path is untested")
 	}
 }
 
