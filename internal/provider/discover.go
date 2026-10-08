@@ -48,9 +48,13 @@ func DefaultBudget(now time.Time) Budget {
 // Stats reports what a Discover call saw, independent of whether every file
 // seen made it into the returned Source list.
 type Stats struct {
-	FilesSeen    int
-	FilesSkipped int // by size, by type, or by budget cap
-	BudgetHit    bool
+	FilesSeen            int
+	FilesSkipped         int // sum of FilesSkippedBySize, FilesSkippedByType, and FilesSkippedByBudget
+	FilesSkippedBySize   int
+	FilesSkippedByType   int
+	FilesSkippedByBudget int
+	BudgetHit            bool
+	ResolvedRoots        []string
 }
 
 // Discover expands d's Roots against env, applies b, and returns the
@@ -69,6 +73,7 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 	override := resolveHomeOverride(d, env)
 
 	var stats Stats
+	resolvedRoots := make(map[string]struct{})
 	var candidates []Source
 
 	for _, spec := range d.Roots {
@@ -80,6 +85,7 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 			continue
 		}
 		root := path.Join(base, spec.Rel)
+		resolvedRoots[toRealPath(env.GOOS, root)] = struct{}{}
 		pattern := path.Join(root, spec.Glob)
 
 		matches, err := doublestar.Glob(env.FS, pattern)
@@ -91,7 +97,12 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 
 		for _, m := range matches {
 			info, err := fs.Stat(env.FS, m)
-			if err != nil || info.IsDir() {
+			if err != nil {
+				continue
+			}
+			if info.IsDir() {
+				stats.FilesSkipped++
+				stats.FilesSkippedByType++
 				continue
 			}
 			stats.FilesSeen++
@@ -103,6 +114,7 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 			// (ADR-005).
 			if d.Kind != SourceSQLite && info.Size() > b.MaxBytesFile {
 				stats.FilesSkipped++
+				stats.FilesSkippedBySize++
 				continue
 			}
 			candidates = append(candidates, Source{
@@ -147,6 +159,7 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 		}
 		if cutoff {
 			stats.FilesSkipped++
+			stats.FilesSkippedByBudget++
 			continue
 		}
 		sources = append(sources, c)
@@ -154,6 +167,10 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 			totalBytes += c.Size
 		}
 	}
+	for root := range resolvedRoots {
+		stats.ResolvedRoots = append(stats.ResolvedRoots, root)
+	}
+	sort.Strings(stats.ResolvedRoots)
 
 	return sources, stats, nil
 }

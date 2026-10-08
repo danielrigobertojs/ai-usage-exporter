@@ -4,12 +4,21 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/model"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider/fake"
 )
@@ -88,4 +97,115 @@ func TestReportJSONUnknownPriceWithInjectedProvider(t *testing.T) {
 	if len(result.Rows) == 0 || result.Rows[0].CostUSD != nil {
 		t.Fatalf("rows=%+v, want unknown cost", result.Rows)
 	}
+}
+
+func TestDoctorJSONReportsBudgetHit(t *testing.T) {
+	oldRegistry, oldEnvironment := registry, environment
+	t.Cleanup(func() { registry, environment = oldRegistry, oldEnvironment })
+	registry = func() (*provider.Registry, error) { r := provider.NewRegistry(); return r, r.Register(fake.New(0)) }
+	files := make(fstest.MapFS, 20_001)
+	for i := 0; i < 20_001; i++ {
+		files[fmt.Sprintf("home/test/.fake/%05d.jsonl", i)] = &fstest.MapFile{Data: []byte("x"), ModTime: time.Unix(int64(i), 0)}
+	}
+	environment = func() provider.Env {
+		return provider.Env{GOOS: "linux", Home: "/home/test", Getenv: func(string) string { return "" }, FS: files}
+	}
+	var out, errOut bytes.Buffer
+	if got := Execute([]string{"doctor", "--output", "json"}, &out, &errOut); got != 0 {
+		t.Fatalf("exit=%d stderr=%s", got, errOut.String())
+	}
+	var rows []doctorRow
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || !rows[0].BudgetHit || rows[0].SkippedByBudget != 1 {
+		t.Fatalf("rows=%+v, want budget_hit with one budget skip", rows)
+	}
+}
+
+func TestCLIDoesNotUseFmtPrintWithoutWriter(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), entry.Name(), nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", entry.Name(), err)
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkg, ok := sel.X.(*ast.Ident)
+			if ok && pkg.Name == "fmt" && (sel.Sel.Name == "Print" || sel.Sel.Name == "Printf" || sel.Sel.Name == "Println") {
+				t.Errorf("%s uses fmt.%s without an injected writer", entry.Name(), sel.Sel.Name)
+			}
+			return true
+		})
+	}
+}
+
+func TestReportJSONStaysParseableWhenWarningsUseStderr(t *testing.T) {
+	oldRegistry, oldEnvironment := registry, environment
+	t.Cleanup(func() { registry, environment = oldRegistry, oldEnvironment })
+	registry = func() (*provider.Registry, error) {
+		r := provider.NewRegistry()
+		return r, r.Register(failingProvider{})
+	}
+	environment = func() provider.Env {
+		return provider.Env{GOOS: "linux", Home: "/home/test", Getenv: func(string) string { return "" }, FS: fstest.MapFS{"home/test/.broken/a.jsonl": {Data: []byte("x"), ModTime: time.Now()}}}
+	}
+	var out, errOut bytes.Buffer
+	if got := Execute([]string{"report", "--output", "json"}, &out, &errOut); got != 0 {
+		t.Fatalf("exit=%d stderr=%s", got, errOut.String())
+	}
+	var result reportView
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("stdout is not JSON: %v; stdout=%q", err, out.String())
+	}
+	if !strings.Contains(errOut.String(), "warning: broken: 1 parse errors") {
+		t.Fatalf("stderr=%q, want parse warning", errOut.String())
+	}
+}
+
+func TestDoctorReportsFirstParseErrorAndResolvedRoots(t *testing.T) {
+	oldRegistry, oldEnvironment := registry, environment
+	t.Cleanup(func() { registry, environment = oldRegistry, oldEnvironment })
+	registry = func() (*provider.Registry, error) {
+		r := provider.NewRegistry()
+		return r, r.Register(failingProvider{})
+	}
+	environment = func() provider.Env {
+		return provider.Env{GOOS: "linux", Home: "/home/test", Getenv: func(string) string { return "" }, FS: fstest.MapFS{"home/test/.broken/a.jsonl": {Data: []byte("x"), ModTime: time.Now()}}}
+	}
+	var out, errOut bytes.Buffer
+	if got := Execute([]string{"doctor", "--output", "json"}, &out, &errOut); got != 0 {
+		t.Fatalf("exit=%d stderr=%s", got, errOut.String())
+	}
+	var rows []doctorRow
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].FirstParseError != "synthetic parse error" || len(rows[0].Roots) != 1 || rows[0].Roots[0] != "/home/test/.broken" {
+		t.Fatalf("rows=%+v, want resolved root and first parse error", rows)
+	}
+}
+
+type failingProvider struct{}
+
+func (failingProvider) Descriptor() provider.Descriptor {
+	return provider.Descriptor{ID: "broken", DisplayName: "Broken Provider", Kind: provider.SourceJSONL, Roots: []provider.RootSpec{{Base: provider.BaseHome, Rel: ".broken", Glob: "*.jsonl"}}}
+}
+
+func (failingProvider) Parse(context.Context, provider.Source, func(model.UsageEvent) error) error {
+	return errors.New("synthetic parse error")
 }

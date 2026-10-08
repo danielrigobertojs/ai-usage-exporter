@@ -60,6 +60,12 @@ func TestDiscoverSizeBudgetAndOrdering(t *testing.T) {
 	if stats.FilesSkipped != 1 {
 		t.Errorf("FilesSkipped = %d, want 1", stats.FilesSkipped)
 	}
+	if stats.FilesSkippedBySize != 1 || stats.FilesSkippedByType != 0 || stats.FilesSkippedByBudget != 0 {
+		t.Errorf("skip breakdown = size:%d type:%d budget:%d, want 1:0:0", stats.FilesSkippedBySize, stats.FilesSkippedByType, stats.FilesSkippedByBudget)
+	}
+	if got, want := stats.ResolvedRoots, []string{"/home/user/.claude/projects"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ResolvedRoots = %q, want %q", got, want)
+	}
 	if stats.BudgetHit {
 		t.Error("BudgetHit = true, want false")
 	}
@@ -432,6 +438,9 @@ func TestDiscoverSkipsDirectoryMatches(t *testing.T) {
 	if stats.FilesSeen != 0 {
 		t.Errorf("FilesSeen = %d, want 0 (a directory match isn't a file)", stats.FilesSeen)
 	}
+	if stats.FilesSkipped != 1 || stats.FilesSkippedByType != 1 {
+		t.Errorf("directory skip = total:%d type:%d, want 1:1", stats.FilesSkipped, stats.FilesSkippedByType)
+	}
 }
 
 // TestDiscoverTieBreaksByPath proves two Sources with an identical ModTime
@@ -472,6 +481,9 @@ func TestDiscoverMaxFilesCutoff(t *testing.T) {
 	}
 	if !stats.BudgetHit {
 		t.Error("BudgetHit = false, want true")
+	}
+	if stats.FilesSkippedByBudget != 1 {
+		t.Errorf("FilesSkippedByBudget = %d, want 1", stats.FilesSkippedByBudget)
 	}
 	if len(sources) != 1 || sources[0].Path != "/home/user/.x/new.jsonl" {
 		t.Errorf("sources = %+v, want only new.jsonl", sources)
