@@ -1,0 +1,4 @@
+.git
+dist
+ai-usage-exporter
+deploy/.env

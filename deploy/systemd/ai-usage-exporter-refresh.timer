@@ -1,0 +1,10 @@
+[Unit]
+Description=Optional scheduled refresh for ai-usage-exporter
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=ai-usage-exporter-refresh.service
+
+[Install]
+WantedBy=timers.target

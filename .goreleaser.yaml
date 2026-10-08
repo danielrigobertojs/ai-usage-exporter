@@ -1,0 +1,85 @@
+version: 2
+
+project_name: ai-usage-exporter
+
+builds:
+  - id: darwin
+    main: ./cmd/ai-usage-exporter
+    binary: ai-usage-exporter
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/danielrigobertojs/ai-usage-exporter/internal/version.Version={{ .Version }} -X github.com/danielrigobertojs/ai-usage-exporter/internal/version.Commit={{ .Commit }} -X github.com/danielrigobertojs/ai-usage-exporter/internal/version.BuildDate={{ .Date }}
+  - id: linux
+    main: ./cmd/ai-usage-exporter
+    binary: ai-usage-exporter
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/danielrigobertojs/ai-usage-exporter/internal/version.Version={{ .Version }} -X github.com/danielrigobertojs/ai-usage-exporter/internal/version.Commit={{ .Commit }} -X github.com/danielrigobertojs/ai-usage-exporter/internal/version.BuildDate={{ .Date }}
+  - id: windows
+    main: ./cmd/ai-usage-exporter
+    binary: ai-usage-exporter
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/danielrigobertojs/ai-usage-exporter/internal/version.Version={{ .Version }} -X github.com/danielrigobertojs/ai-usage-exporter/internal/version.Commit={{ .Commit }} -X github.com/danielrigobertojs/ai-usage-exporter/internal/version.BuildDate={{ .Date }}
+
+archives:
+  - id: darwin
+    ids:
+      - darwin
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+  - id: linux
+    ids:
+      - linux
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+  - id: windows
+    ids:
+      - windows
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [zip]
+
+nfpms:
+  - id: packages
+    package_name: ai-usage-exporter
+    ids:
+      - linux
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    homepage: https://github.com/danielrigobertojs/ai-usage-exporter
+    maintainer: Daniel Rigoberto Jacobo Sandoval
+    description: Prometheus exporter for local AI coding agent usage.
+    license: Apache-2.0
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: danielrigobertojs
+    name: ai-usage-exporter
+  draft: false
+  prerelease: auto
+
+changelog:
+  sort: asc

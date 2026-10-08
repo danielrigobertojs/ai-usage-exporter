@@ -15,8 +15,22 @@ MODULE="$(go list -m)"
 OUT="THIRD_PARTY_LICENSES.md"
 COPYLEFT_RE='(^|-| )(GPL|AGPL|LGPL|MPL)(-|$| )'
 
-csv="$(go run "github.com/google/go-licenses@${GO_LICENSES_VERSION}" csv ./... 2>/dev/null \
-  | grep -v "^${MODULE}," || true)"
+# The Makefile is the source of truth for the release matrix. Collect its
+# union so attribution is complete and byte-for-byte reproducible on any
+# developer host; a host-only graph misses platform-conditional imports.
+tool_dir="$(mktemp -d)"
+trap 'rm -rf "$tool_dir"' EXIT
+# Build the analyzer for the host once. GOOS/GOARCH below must shape the
+# inspected package graph, not the executable that performs the inspection.
+GOBIN="$tool_dir" go install "github.com/google/go-licenses@${GO_LICENSES_VERSION}"
+csv=""
+while IFS= read -r target; do
+  IFS=/ read -r goos goarch <<<"$target"
+  target_csv="$(GOOS="$goos" GOARCH="$goarch" "$tool_dir/go-licenses" csv ./... 2>/dev/null \
+    | grep -v "^${MODULE}," || true)"
+  csv+=$'\n'"$target_csv"
+done < <(make -s release-platforms)
+csv="$(sort -u <<<"$csv" | sed '/^$/d')"
 
 # go-licenses@v1.6.0 has a walk-up-to-module-root boundary bug (upstream
 # issue google/go-licenses#244): when a dependency's only imported package
@@ -30,6 +44,23 @@ csv="$(go run "github.com/google/go-licenses@${GO_LICENSES_VERSION}" csv ./... 2
 if mathutil_version="$(go list -m -f '{{.Version}}' modernc.org/mathutil 2>/dev/null)" && [[ -n "$mathutil_version" ]]; then
   csv="$(sed -E "s#^modernc\.org/mathutil,Unknown,Unknown\$#modernc.org/mathutil,https://gitlab.com/cznic/mathutil/blob/${mathutil_version}/LICENSE,BSD-3-Clause#" <<<"$csv")"
 fi
+
+# Different licensing evidence for one module must be reviewed instead of
+# allowing sort -u to hide the conflict in the cross-platform union.
+if ! awk -F, '
+  NF >= 3 {
+    if (seen[$1] && license[$1] != $3) {
+      printf "error: %s has conflicting licenses across release targets: %s and %s\\n", $1, license[$1], $3 > "/dev/stderr"
+      bad = 1
+    }
+    seen[$1] = 1
+    license[$1] = $3
+  }
+  END { exit bad }
+' <<<"$csv"; then
+  exit 1
+fi
+csv="$(sort -u <<<"$csv")"
 
 {
   echo "# Third-Party Licenses"
