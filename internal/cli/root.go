@@ -51,7 +51,10 @@ func Execute(args []string, out, errOut io.Writer) int {
 	}
 }
 
-func registry() (*provider.Registry, error) { return all.Registry() }
+// registry and environment are seams for deterministic command tests. Execute
+// keeps its public contract; production retains the real implementations.
+var registry = all.Registry
+var environment = provider.OSEnv
 
 func outputFlag(name string, args []string) (string, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
@@ -157,12 +160,12 @@ func report(args []string, out, errOut io.Writer) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.ScanTimeout)
 	defer cancel()
-	cat, err := pricing.Load(ctx, cfg.Pricing)
+	cat, err := pricing.Load(context.Background(), cfg.Pricing)
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
 	}
-	result, err := scan.Run(ctx, reg, provider.OSEnv(), provider.DefaultBudget(time.Now()), time.Now(), tz)
+	result, err := scan.Run(ctx, reg, environment(), provider.DefaultBudget(time.Now()), time.Now(), tz)
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
@@ -284,12 +287,12 @@ func doctor(args []string, out, errOut io.Writer) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.ScanTimeout)
 	defer cancel()
-	cat, err := pricing.Load(ctx, cfg.Pricing)
+	cat, err := pricing.Load(context.Background(), cfg.Pricing)
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
 	}
-	result, err := scan.Run(ctx, reg, provider.OSEnv(), provider.DefaultBudget(time.Now()), time.Now(), tz)
+	result, err := scan.Run(ctx, reg, environment(), provider.DefaultBudget(time.Now()), time.Now(), tz)
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
