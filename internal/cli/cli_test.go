@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider/fake"
@@ -66,5 +67,25 @@ func TestDoctorReportsUnavailableInjectedProvider(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"available":false`) || !strings.Contains(out.String(), `"hint"`) {
 		t.Fatalf("doctor output=%s", out.String())
+	}
+}
+
+func TestReportJSONUnknownPriceWithInjectedProvider(t *testing.T) {
+	oldRegistry, oldEnvironment := registry, environment
+	t.Cleanup(func() { registry, environment = oldRegistry, oldEnvironment })
+	registry = func() (*provider.Registry, error) { r := provider.NewRegistry(); return r, r.Register(fake.New(1)) }
+	environment = func() provider.Env {
+		return provider.Env{GOOS: "linux", Home: "/home/test", Getenv: func(string) string { return "" }, FS: fstest.MapFS{"home/test/.fake/a.jsonl": {Data: []byte("x"), ModTime: time.Now()}}}
+	}
+	var out, errOut bytes.Buffer
+	if got := Execute([]string{"report", "--output", "json"}, &out, &errOut); got != 0 {
+		t.Fatalf("exit=%d stderr=%s", got, errOut.String())
+	}
+	var result reportView
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Rows) == 0 || result.Rows[0].CostUSD != nil {
+		t.Fatalf("rows=%+v, want unknown cost", result.Rows)
 	}
 }
