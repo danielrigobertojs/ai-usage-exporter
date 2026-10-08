@@ -18,6 +18,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/aggregate"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/model"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider/fake"
@@ -52,6 +53,12 @@ func TestReportRejectsWindow(t *testing.T) {
 	}
 	if out.Len() != 0 || !strings.Contains(errOut.String(), "24h") {
 		t.Fatalf("out=%q err=%q", out.String(), errOut.String())
+	}
+}
+
+func TestReportAcceptsOneHourWindow(t *testing.T) {
+	if !validWindow(aggregate.Window1h) {
+		t.Fatal("1h must be an accepted report window")
 	}
 }
 

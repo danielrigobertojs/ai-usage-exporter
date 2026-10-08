@@ -14,13 +14,10 @@ import (
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/scan"
 )
 
-// runRescanLoop is the opt-in, explicit re-scan mechanism ADR-001 carves
-// out as an exception to "parse once at startup": it never runs on its
-// own, only in response to trigger (wired to SIGHUP) or, when
-// cfg.ScanInterval > 0, a ticker. The default ScanInterval is 0, which
-// disables the ticker entirely and leaves trigger as the only way in -
-// matching ADR-001's default of "no re-scan loop" while still letting an
-// operator who wants one opt in.
+// runRescanLoop refreshes the complete snapshot in response to trigger
+// (wired to SIGHUP) or, when cfg.ScanInterval > 0, a ticker. The default
+// ScanInterval is one minute; setting it to 0 disables the ticker and leaves
+// trigger as the only way in.
 //
 // A trigger or tick that arrives while a scan is already running is
 // dropped, never queued: scanning is a single atomic flag, not a buffered

@@ -57,14 +57,13 @@ Si ya tienes Grafana corriendo y solo quieres el dashboard, sin este
    (es una variable de tipo "datasource", no un UID fijo — por eso el mismo
    JSON sirve igual para provisioning por archivo que para import manual).
 
-### Por qué `scrape_interval: 60s` y no algo más agresivo
+### Por qué `scrape_interval: 15s`
 
-`ai-usage-exporter` escanea los logs **una sola vez al arrancar** y sirve
-ese snapshot sin cambios hasta el siguiente reinicio (ver
-[ADR-001](../docs/adr/0001-startup-scan-and-gauges.md)). Scrapear cada
-pocos segundos no añade resolución real: solo guarda en el TSDB de
-Prometheus muchas copias idénticas del mismo valor. `60s` es ya más
-frecuente de lo que el dato necesita; es intencional, no un descuido.
+`ai-usage-exporter` reescanea los logs completos cada 60 segundos por
+defecto (ver [ADR-001](../docs/adr/0001-startup-scan-and-gauges.md)).
+Scrapear cada 15 segundos hace visibles el snapshot nuevo y su frescura sin
+esperar otro minuto de Prometheus. Las métricas de uso siguen siendo gauges
+por ventana y no se convierten en counters.
 
 ### Qué no mirar en las series de uso
 

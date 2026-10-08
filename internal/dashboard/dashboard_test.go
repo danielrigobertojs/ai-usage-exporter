@@ -38,6 +38,10 @@ type grafanaDashboard struct {
 }
 
 var wantPanelTitles = []string{
+	"Ahora: tokens (1h)",
+	"Ahora: coste (1h)",
+	"Ahora: uso continuo (1h)",
+	"Ahora: frescura del escaneo",
 	"Fila de estado",
 	"Tokens por herramienta",
 	"Coste por modelo",

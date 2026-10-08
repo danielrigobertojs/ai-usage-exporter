@@ -10,6 +10,7 @@ import "time"
 type Window string
 
 const (
+	Window1h  Window = "1h"
 	Window24h Window = "24h"
 	Window7d  Window = "7d"
 	Window30d Window = "30d"
@@ -19,10 +20,10 @@ const (
 
 // orderedWindows fixes the iteration order Windows reports membership in,
 // so callers (and tests) get a deterministic slice.
-var orderedWindows = []Window{Window24h, Window7d, Window30d, WindowMTD, WindowAll}
+var orderedWindows = []Window{Window1h, Window24h, Window7d, Window30d, WindowMTD, WindowAll}
 
 // Windows returns the windows an event at eventAt belongs to, given a scan
-// instant now and the reporting timezone tz. The 24h/7d/30d windows are
+// instant now and the reporting timezone tz. The 1h/24h/7d/30d windows are
 // plain trailing durations; mtd is a Gregorian calendar-month boundary
 // anchored at local midnight on the 1st of the month in tz, computed from
 // calendar year/month equality rather than a fixed duration, so DST
@@ -36,6 +37,9 @@ func Windows(eventAt, now time.Time, tz *time.Location) []Window {
 	inFuture := eventAt.After(now)
 
 	result := make([]Window, 0, len(orderedWindows))
+	if !inFuture && elapsed <= time.Hour {
+		result = append(result, Window1h)
+	}
 	if !inFuture && elapsed <= 24*time.Hour {
 		result = append(result, Window24h)
 	}

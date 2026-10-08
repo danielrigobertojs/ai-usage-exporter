@@ -21,7 +21,7 @@ contrato:
 | `tool` | Agente de IA que generó el uso | `claude-code`, `codex`, `opencode`, ... |
 | `model` | Modelo usado dentro de esa herramienta | p. ej. `claude-opus-4`, `gpt-5-codex` |
 | `token_type` | Categoría de tokens contados | `input`, `output`, `cache_read`, `cache_write`, `reasoning` |
-| `window` | Ventana temporal agregada en el momento del escaneo | `24h`, `7d`, `30d`, `mtd`, `all` |
+| `window` | Ventana temporal agregada en el momento del escaneo | `1h`, `24h`, `7d`, `30d`, `mtd`, `all` |
 
 `session_id` **nunca** es un label, en ninguna circunstancia, bajo ninguna
 métrica futura. Es la trampa clásica de cardinalidad en exporters de este
@@ -38,12 +38,14 @@ caracteres**; nunca se usa la ruta completa del proyecto en disco.
 Cota declarada para el peor caso previsto:
 
 ```
-5 tools × 30 modelos × 5 token_type × 5 window = 3.750 series
+5 tools × 30 modelos × 5 token_type × 6 window = 4.500 series
 ```
 
 Esa cota es una regla de diseño, no una sugerencia: cualquier label nuevo que
 se proponga debe calcular su impacto en esta multiplicación antes de
-aceptarse.
+aceptarse. La ventana `1h` añade 750 series (+20 %) frente a las cinco
+ventanas originales; se acepta porque habilita la monitorización de consumo
+reciente sin introducir labels ni estado persistente.
 
 ## Métricas
 
@@ -156,19 +158,33 @@ reconciliar.
 - **Labels:** ninguno
 - **Unidad:** segundos (Unix timestamp UTC)
 - **Significado:** momento en que el proceso completó el escaneo cuyo
-  snapshot está sirviendo `/metrics` ahora. Como el parseo ocurre una sola
-  vez al arrancar ([ADR-001](adr/0001-startup-scan-and-gauges.md)), este
-  valor es esencialmente el tiempo de arranque del proceso y no cambia hasta
-  el siguiente reinicio.
+  snapshot está sirviendo `/metrics` ahora. Por defecto el exporter repite
+  un escaneo completo cada 60 segundos; este valor cambia después de cada
+  reescaneo exitoso. Con `scan_interval: 0`, conserva el timestamp del
+  escaneo de arranque hasta un `SIGHUP` o un reinicio.
 
 ### `ai_usage_scan_duration_seconds`
 
 - **Tipo:** gauge
 - **Labels:** ninguno
 - **Unidad:** segundos
-- **Significado:** cuánto tardó el escaneo completo de todos los providers
-  al arrancar. Útil para detectar degradación cuando el volumen de logs
-  locales crece.
+- **Significado:** cuánto tardó el último escaneo completo de todos los
+  providers. Útil para detectar degradación cuando el volumen de logs locales
+  crece.
+
+## Coste de escaneo y cadencia
+
+El valor por defecto de `scan_interval` es `60s`; `0` lo desactiva para quien
+quiera un snapshot congelado. En una medición del 2026-10-08 sobre macOS arm64
+con Go 1.27.1 y `CGO_ENABLED=0`, un escaneo caliente de 40 JSONL de Claude
+Code, 276 JSONL de Codex y una fuente SQLite de OpenCode de 2,7 GB tardó
+0,68 s (≈1,1 % de un intervalo de 60 s). Para recalcular el presupuesto en
+otra máquina con sus propios datos, ejecutar tres veces y usar las corridas
+calientes:
+
+```bash
+/usr/bin/time -p ai-usage-exporter doctor --output json
+```
 
 ### `ai_usage_scan_files`
 

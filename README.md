@@ -44,11 +44,11 @@ archivo YAML (`<xdg_config>/ai-usage-exporter/config.yaml`,
 `--scan-timeout`, `--timezone`, `--providers`, `--labels-project`). Ver
 `internal/config`.
 
-`/metrics` se sirve a partir de un único escaneo hecho al arrancar
-([ADR-001](docs/adr/0001-startup-scan-and-gauges.md)): los valores no
-avanzan mientras el proceso vive, salvo que se active explícitamente un
-reescaneo con `SIGHUP` o `scan_interval` (ambos apagados por defecto — ver
-la sección "Excepción explícita y opt-in" del ADR-001).
+`/metrics` se sirve a partir de un snapshot completo de los logs
+([ADR-001](docs/adr/0001-startup-scan-and-gauges.md)), que por defecto se
+renueva cada 60 segundos. `AI_USAGE_SCAN_INTERVAL=0` conserva el
+comportamiento de snapshot congelado; `SIGHUP` también puede solicitar un
+reescaneo.
 
 ### Requisitos
 
