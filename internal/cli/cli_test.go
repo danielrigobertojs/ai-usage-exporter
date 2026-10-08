@@ -54,6 +54,20 @@ func TestReportRejectsWindow(t *testing.T) {
 		t.Fatalf("out=%q err=%q", out.String(), errOut.String())
 	}
 }
+
+func TestProvidersRejectsInvalidOutput(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if got := Execute([]string{"providers", "--output", "bogus"}, &out, &errOut); got != 2 || out.Len() != 0 || !strings.Contains(errOut.String(), "--output") {
+		t.Fatalf("exit=%d out=%q err=%q", got, out.String(), errOut.String())
+	}
+}
+
+func TestDoctorRejectsUnknownTool(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if got := Execute([]string{"doctor", "--tool", "bogus"}, &out, &errOut); got != 2 || out.Len() != 0 || !strings.Contains(errOut.String(), `unknown provider "bogus"`) {
+		t.Fatalf("exit=%d out=%q err=%q", got, out.String(), errOut.String())
+	}
+}
 func TestExecuteRequiresSubcommand(t *testing.T) {
 	for _, args := range [][]string{nil, {"serve"}} {
 		var out, errOut bytes.Buffer
