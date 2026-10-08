@@ -1,0 +1,26 @@
+{
+  "302ai": {
+    "models": {
+      "claude-opus-5": {"cost": {"input": 5, "output": 25}},
+      "reseller-only": {"cost": {"input": 2, "output": 20}}
+    }
+  },
+  "anthropic": {
+    "models": {
+      "claude-opus-5": {"cost": {"input": 5, "output": 25, "cache_read": 0.5, "cache_write": 6.25}},
+      "shared-first-party-id": {"cost": {"input": 3, "output": 30}},
+      "unpriced-model": {"cost": null},
+      "zero-priced-model": {"cost": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "reasoning": 0}}
+    }
+  },
+  "openai": {
+    "models": {
+      "shared-first-party-id": {"cost": {"input": 9, "output": 90}}
+    }
+  },
+  "z-reseller": {
+    "models": {
+      "reseller-only": {"cost": {"input": 7, "output": 70}}
+    }
+  }
+}

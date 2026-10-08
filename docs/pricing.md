@@ -7,11 +7,12 @@ de ese paquete: cualquier cambio en el orden de resolución, el formato de
 los archivos de precios o las rutas por plataforma debe actualizarlo en el
 mismo PR.
 
-**Lo que expone esta métrica es una estimación a precio de lista en USD,
-no una factura.** No reconcilia descuentos contractuales, créditos,
-redondeo por proveedor, ni el campo `cost` nativo que algunos formatos (por
-ejemplo OpenCode) ya incluyen — esa reconciliación es una decisión del
-collector que consume este paquete, documentada allí.
+**Lo que expone esta métrica es una estimación a precio de lista público en
+USD del proveedor de primera parte, no una factura.** No reconcilia
+descuentos contractuales, planes de suscripción, créditos, redondeo por
+proveedor, ni el campo `cost` nativo que algunos formatos (por ejemplo
+OpenCode) ya incluyen — esa reconciliación es una decisión del collector que
+consume este paquete, documentada allí.
 
 ## Orden de resolución
 
@@ -53,6 +54,11 @@ $0**, debe quedar observable como "sin precio".
   ausente: se ignora y se intenta el nivel siguiente, nunca hace panic.
 - La petición manda `User-Agent: ai-usage-exporter/<version> (+<repo>)`,
   como cortesía identificable hacia quien mantiene el dataset gratis.
+- Cuando un ID de modelo aparece bajo varios providers, se prefiere una lista
+  ordenada de proveedores de primera parte (`anthropic`, `openai`, `opencode`,
+  ...); si ninguno coincide, gana el provider con ID alfabéticamente primero.
+  Es una heurística de procedencia, no una atribución de facturación. Ver
+  ADR-006.
 
 ### Forzar modo offline
 
