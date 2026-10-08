@@ -21,6 +21,27 @@ import (
 // reassigns it.
 var modelsDevURL = "https://models.dev/api.json"
 
+// modelsDevProviderPrecedence favors the first-party providers whose public
+// list prices best represent the direct billing paths used by this exporter.
+// This is a provenance heuristic, not a trust list: bare model IDs still lack
+// the provider that produced the usage event. ADR-006 documents the trade-off
+// and the condition for replacing this with provider-qualified lookups.
+var modelsDevProviderPrecedence = []string{
+	"anthropic",
+	"openai",
+	"opencode",
+	"google",
+	"xai",
+	"moonshotai",
+	"deepseek",
+	"zhipuai",
+	"z-ai",
+	"mistral",
+	"meta",
+	"alibaba",
+	"qwen",
+}
+
 // modelsDevProvider is one entry of the top-level, provider-id-keyed
 // object models.dev returns. Fields this package doesn't need (env, npm,
 // doc, ...) are left to json.Unmarshal's default of silently ignoring
@@ -43,27 +64,19 @@ type modelsDevModel struct {
 // cost object are skipped rather than recorded at a false $0: an unpriced
 // model must stay "unknown" to CostUSD, never "free".
 //
-// A model ID that recurs across providers keeps the value from whichever
-// provider ID sorts first alphabetically. That trades perfect provenance
-// for the simplicity the issue's resolution order (bare key, no provider
-// qualification) already assumes for this tier, and is revisited only if
-// real collisions surface in practice; providers is decoded into a Go map,
-// so iterating it directly without a fixed order would make the winner
-// depend on map iteration, which Go deliberately randomizes.
+// A model ID that recurs across providers keeps the value from the first
+// available provider in modelsDevProviderPrecedence. Providers outside that
+// list retain the former alphabetical fallback. The fixed order is necessary
+// because providers is decoded into a Go map, whose iteration order is not
+// stable.
 func parseModelsDev(data []byte) (table, error) {
 	var providers map[string]modelsDevProvider
 	if err := json.Unmarshal(data, &providers); err != nil {
 		return nil, fmt.Errorf("pricing: decode models.dev payload: %w", err)
 	}
 
-	providerIDs := make([]string, 0, len(providers))
-	for id := range providers {
-		providerIDs = append(providerIDs, id)
-	}
-	sort.Strings(providerIDs)
-
 	t := make(table)
-	for _, id := range providerIDs {
+	for _, id := range orderedModelsDevProviderIDs(providers) {
 		for modelID, m := range providers[id].Models {
 			if m.Cost == nil {
 				continue
@@ -75,6 +88,29 @@ func parseModelsDev(data []byte) (table, error) {
 		}
 	}
 	return t, nil
+}
+
+// orderedModelsDevProviderIDs puts known first-party providers first and
+// appends all remaining providers alphabetically. It never depends on a map
+// traversal order, including when a precedence entry is absent from a payload.
+func orderedModelsDevProviderIDs(providers map[string]modelsDevProvider) []string {
+	ids := make([]string, 0, len(providers))
+	seen := make(map[string]struct{}, len(modelsDevProviderPrecedence))
+	for _, id := range modelsDevProviderPrecedence {
+		if _, ok := providers[id]; ok {
+			ids = append(ids, id)
+			seen[id] = struct{}{}
+		}
+	}
+
+	remaining := make([]string, 0, len(providers)-len(ids))
+	for id := range providers {
+		if _, ok := seen[id]; !ok {
+			remaining = append(remaining, id)
+		}
+	}
+	sort.Strings(remaining)
+	return append(ids, remaining...)
 }
 
 // userAgent identifies this binary to models.dev, so whoever operates it
