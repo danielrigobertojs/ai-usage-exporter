@@ -7,6 +7,10 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"testing/fstest"
+
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider"
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider/fake"
 )
 
 func TestExecuteVersion(t *testing.T) {
@@ -46,5 +50,21 @@ func TestExecuteRequiresSubcommand(t *testing.T) {
 		if got := Execute(args, &out, &errOut); got != 2 || errOut.Len() == 0 {
 			t.Fatalf("args=%v exit=%d stderr=%q", args, got, errOut.String())
 		}
+	}
+}
+
+func TestDoctorReportsUnavailableInjectedProvider(t *testing.T) {
+	oldRegistry, oldEnvironment := registry, environment
+	t.Cleanup(func() { registry, environment = oldRegistry, oldEnvironment })
+	registry = func() (*provider.Registry, error) { r := provider.NewRegistry(); return r, r.Register(fake.New(1)) }
+	environment = func() provider.Env {
+		return provider.Env{GOOS: "linux", Home: "/home/test", Getenv: func(string) string { return "" }, FS: fstest.MapFS{}}
+	}
+	var out, errOut bytes.Buffer
+	if got := Execute([]string{"doctor", "--output", "json"}, &out, &errOut); got != 0 {
+		t.Fatalf("exit=%d stderr=%s", got, errOut.String())
+	}
+	if !strings.Contains(out.String(), `"available":false`) || !strings.Contains(out.String(), `"hint"`) {
+		t.Fatalf("doctor output=%s", out.String())
 	}
 }
