@@ -39,3 +39,11 @@ func TestReportRejectsWindow(t *testing.T) {
 		t.Fatalf("out=%q err=%q", out.String(), errOut.String())
 	}
 }
+func TestExecuteRequiresSubcommand(t *testing.T) {
+	for _, args := range [][]string{nil, {"serve"}} {
+		var out, errOut bytes.Buffer
+		if got := Execute(args, &out, &errOut); got != 2 || errOut.Len() == 0 {
+			t.Fatalf("args=%v exit=%d stderr=%q", args, got, errOut.String())
+		}
+	}
+}

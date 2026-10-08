@@ -29,6 +29,7 @@ import (
 // not need to redirect process-global stdout/stderr.
 func Execute(args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
+		fmt.Fprintln(errOut, "serve is handled by the command entry point; Execute requires a subcommand")
 		return 2
 	}
 	switch args[0] {
@@ -42,6 +43,7 @@ func Execute(args []string, out, errOut io.Writer) int {
 	case "doctor":
 		return doctor(args[1:], out, errOut)
 	case "serve":
+		fmt.Fprintln(errOut, "serve is handled by the command entry point")
 		return 2 // serve is owned by cmd, where signal lifetime belongs.
 	default:
 		fmt.Fprintf(errOut, "unknown command %q\n", args[0])
@@ -148,13 +150,19 @@ func report(args []string, out, errOut io.Writer) int {
 			return 2
 		}
 	}
-	tz, _ := cfg.Location()
-	cat, err := pricing.Load(context.Background(), cfg.Pricing)
+	tz, err := cfg.Location()
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
 	}
-	result, err := scan.Run(context.Background(), reg, provider.OSEnv(), provider.DefaultBudget(time.Now()), time.Now(), tz)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ScanTimeout)
+	defer cancel()
+	cat, err := pricing.Load(ctx, cfg.Pricing)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return 1
+	}
+	result, err := scan.Run(ctx, reg, provider.OSEnv(), provider.DefaultBudget(time.Now()), time.Now(), tz)
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
@@ -269,13 +277,19 @@ func doctor(args []string, out, errOut io.Writer) int {
 			return 2
 		}
 	}
-	tz, _ := cfg.Location()
-	cat, err := pricing.Load(context.Background(), cfg.Pricing)
+	tz, err := cfg.Location()
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
 	}
-	result, err := scan.Run(context.Background(), reg, provider.OSEnv(), provider.DefaultBudget(time.Now()), time.Now(), tz)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ScanTimeout)
+	defer cancel()
+	cat, err := pricing.Load(ctx, cfg.Pricing)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return 1
+	}
+	result, err := scan.Run(ctx, reg, provider.OSEnv(), provider.DefaultBudget(time.Now()), time.Now(), tz)
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
@@ -291,7 +305,7 @@ func doctor(args []string, out, errOut io.Writer) int {
 	for _, p := range reg.All() {
 		d := p.Descriptor()
 		tr := result.PerTool[d.ID]
-		row := doctorRow{ID: d.ID, Available: tr.Available, Files: tr.FilesScanned, Skipped: tr.FilesSkipped, Errors: tr.ParseErrors, BudgetHit: tr.BudgetHit, Hint: fmt.Sprintf("roots: %v", d.Roots), PricingSource: cat.Source()}
+		row := doctorRow{ID: d.ID, Available: tr.Available, Files: tr.FilesScanned, Skipped: tr.FilesSkipped, Errors: tr.ParseErrors, BudgetHit: tr.BudgetHit, Hint: fmt.Sprintf("roots: %v", d.Roots), PricingSource: cat.Source(), ZeroPricedModels: []string{}, UnpricedModels: []string{}}
 		for m := range models[d.ID] {
 			r, ok := cat.Lookup(d.ID, m)
 			if !ok {
