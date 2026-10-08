@@ -19,6 +19,10 @@ build:
 .PHONY: cross
 cross: $(PLATFORMS)
 
+.PHONY: release-platforms
+release-platforms:
+	@printf '%s\n' $(PLATFORMS)
+
 .PHONY: $(PLATFORMS)
 $(PLATFORMS):
 	$(eval OS := $(word 1,$(subst /, ,$@)))

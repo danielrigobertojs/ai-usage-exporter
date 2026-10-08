@@ -1,0 +1,25 @@
+[Unit]
+Description=Prometheus exporter for local AI coding agent usage
+Documentation=https://github.com/danielrigobertojs/ai-usage-exporter/blob/main/docs/install.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ai-usage-exporter serve
+Restart=on-failure
+RestartSec=5s
+
+# The exporter only needs to read agent metadata. Keep the system immutable
+# and allow read-only access only to the provider roots below.
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+ReadOnlyPaths=%h/.claude/projects
+ReadOnlyPaths=%h/.codex/sessions
+ReadOnlyPaths=%h/.codex/archived_sessions
+ReadOnlyPaths=%h/.local/share/opencode
+
+[Install]
+WantedBy=multi-user.target

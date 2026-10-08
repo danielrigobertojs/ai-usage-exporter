@@ -74,6 +74,11 @@ make fmt     # gofmt -l .
 | linux | amd64, arm64 |
 | windows | amd64, arm64 |
 
+### Installation
+
+Release archives, Linux packages, Docker, Go installation, and optional
+systemd/launchd service setup are documented in [docs/install.md](docs/install.md).
+
 ### Licencia
 
 [Apache License 2.0](LICENSE). Avisos de atribución de terceros en

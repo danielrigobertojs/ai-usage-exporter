@@ -1,0 +1,6 @@
+[Unit]
+Description=Request a one-time ai-usage-exporter rescan
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl kill --signal=HUP ai-usage-exporter.service
