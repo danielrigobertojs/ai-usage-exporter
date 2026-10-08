@@ -42,19 +42,19 @@ const (
 // never walks the filesystem: it only ever expands these specs, the same
 // discipline CodexBar documents for its own provider sessions.
 type RootSpec struct {
-	GOOS string // "darwin"|"linux"|"windows"; "" applies to all
-	Base BaseDir
-	Rel  string // e.g. ".claude/projects"
-	Glob string // e.g. "*/*.jsonl"; evaluated with doublestar, never filepath.Glob
+	GOOS string  `json:"goos"` // "darwin"|"linux"|"windows"; "" applies to all
+	Base BaseDir `json:"base"`
+	Rel  string  `json:"rel"`  // e.g. ".claude/projects"
+	Glob string  `json:"glob"` // e.g. "*/*.jsonl"; evaluated with doublestar, never filepath.Glob
 }
 
 // Capabilities declares what a tool's log format can report, so collectors
 // and docs can tell "zero usage" apart from "this field isn't available".
 type Capabilities struct {
-	HasTokens      bool
-	HasCacheTokens bool
-	HasToolCalls   bool
-	HasNativeCost  bool // the format carries USD directly, not just tokens
+	HasTokens      bool `json:"has_tokens"`
+	HasCacheTokens bool `json:"has_cache_tokens"`
+	HasToolCalls   bool `json:"has_tool_calls"`
+	HasNativeCost  bool `json:"has_native_cost"` // the format carries USD directly, not just tokens
 }
 
 // Descriptor is a tool's static, purely data-driven self-declaration. It
