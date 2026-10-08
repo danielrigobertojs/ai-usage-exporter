@@ -19,3 +19,23 @@ remains valid JSON for scripts even when a provider had parse failures.
 Supported windows are `24h`, `7d`, `30d`, `mtd`, and `all`. JSON always goes
 to stdout; diagnostics go to stderr. Exit codes are 0 for success, 1 for an
 execution failure, and 2 for invalid command usage.
+
+## Example output
+
+The following is abbreviated output from one local scan:
+
+```text
+$ ai-usage-exporter version
+ai-usage-exporter dev (none, built unknown, go1.25)
+$ ai-usage-exporter providers
+claude-code     Claude Code     jsonl
+codex           OpenAI Codex    jsonl
+opencode        OpenCode        sqlite
+$ ai-usage-exporter report --window 30d
+claude-code     claude-opus-5   input       3950    0.007900
+opencode        big-pickle      cache_read  17133184 0.000000
+$ ai-usage-exporter doctor
+claude-code     available=true  files=39    skipped=0 errors=0 budget_hit=false
+codex           available=true  files=276   skipped=0 errors=0 budget_hit=false
+opencode        available=true  files=1     skipped=0 errors=0 budget_hit=false
+```
