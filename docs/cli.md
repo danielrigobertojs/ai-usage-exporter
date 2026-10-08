@@ -11,6 +11,10 @@ catalog entry, while zero means its catalog price is explicitly zero.
 `ai-usage-exporter doctor --output json` scans once and prints discovery and
 parse health per provider, including skipped files, budget exhaustion, and
 models with explicit zero pricing separately from unpriced models.
+Each doctor row includes the platform-resolved `roots`, a `skipped` total with
+`skipped_by_size`, `skipped_by_type`, and `skipped_by_budget` breakdowns, and
+the first parsing error when one occurred. Warnings stay on stderr, so stdout
+remains valid JSON for scripts even when a provider had parse failures.
 
 Supported windows are `24h`, `7d`, `30d`, `mtd`, and `all`. JSON always goes
 to stdout; diagnostics go to stderr. Exit codes are 0 for success, 1 for an

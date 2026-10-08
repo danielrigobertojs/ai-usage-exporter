@@ -170,6 +170,7 @@ func report(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, err)
 		return 1
 	}
+	writeScanWarnings(result, errOut)
 	rows := make([]reportRow, 0)
 	for k, n := range result.Snapshot.Tokens {
 		if k.Window != w {
@@ -242,8 +243,13 @@ type doctorRow struct {
 	Available        bool     `json:"available"`
 	Files            int      `json:"files"`
 	Skipped          int      `json:"skipped"`
+	SkippedBySize    int      `json:"skipped_by_size"`
+	SkippedByType    int      `json:"skipped_by_type"`
+	SkippedByBudget  int      `json:"skipped_by_budget"`
 	Errors           int      `json:"errors"`
+	FirstParseError  string   `json:"first_parse_error,omitempty"`
 	BudgetHit        bool     `json:"budget_hit"`
+	Roots            []string `json:"roots"`
 	Hint             string   `json:"hint"`
 	PricingSource    string   `json:"pricing_source"`
 	ZeroPricedModels []string `json:"zero_priced_models"`
@@ -297,6 +303,7 @@ func doctor(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, err)
 		return 1
 	}
+	writeScanWarnings(result, errOut)
 	models := map[string]map[string]bool{}
 	for k := range result.Snapshot.Tokens {
 		if models[k.Tool] == nil {
@@ -308,7 +315,11 @@ func doctor(args []string, out, errOut io.Writer) int {
 	for _, p := range reg.All() {
 		d := p.Descriptor()
 		tr := result.PerTool[d.ID]
-		row := doctorRow{ID: d.ID, Available: tr.Available, Files: tr.FilesScanned, Skipped: tr.FilesSkipped, Errors: tr.ParseErrors, BudgetHit: tr.BudgetHit, Hint: fmt.Sprintf("roots: %v", d.Roots), PricingSource: cat.Source(), ZeroPricedModels: []string{}, UnpricedModels: []string{}}
+		roots := tr.ResolvedRoots
+		if roots == nil {
+			roots = []string{}
+		}
+		row := doctorRow{ID: d.ID, Available: tr.Available, Files: tr.FilesScanned, Skipped: tr.FilesSkipped, SkippedBySize: tr.FilesSkippedBySize, SkippedByType: tr.FilesSkippedByType, SkippedByBudget: tr.FilesSkippedByBudget, Errors: tr.ParseErrors, FirstParseError: tr.FirstParseError, BudgetHit: tr.BudgetHit, Roots: roots, Hint: fmt.Sprintf("roots: %s", strings.Join(roots, ", ")), PricingSource: cat.Source(), ZeroPricedModels: []string{}, UnpricedModels: []string{}}
 		for m := range models[d.ID] {
 			r, ok := cat.Lookup(d.ID, m)
 			if !ok {
@@ -325,8 +336,29 @@ func doctor(args []string, out, errOut io.Writer) int {
 		_ = json.NewEncoder(out).Encode(rows)
 	} else {
 		for _, r := range rows {
-			fmt.Fprintf(out, "%s\tavailable=%t\tfiles=%d\tskipped=%d\terrors=%d\tbudget_hit=%t\n", r.ID, r.Available, r.Files, r.Skipped, r.Errors, r.BudgetHit)
+			fmt.Fprintf(out, "%s\tavailable=%t\tfiles=%d\tskipped=%d (size=%d type=%d budget=%d)\terrors=%d\tbudget_hit=%t", r.ID, r.Available, r.Files, r.Skipped, r.SkippedBySize, r.SkippedByType, r.SkippedByBudget, r.Errors, r.BudgetHit)
+			if r.FirstParseError != "" {
+				fmt.Fprintf(out, "\tfirst_parse_error=%s", r.FirstParseError)
+			}
+			fmt.Fprintln(out)
 		}
 	}
 	return 0
+}
+
+// writeScanWarnings keeps structured stdout safe for pipes while still
+// telling an interactive caller that one provider could not parse every
+// source. It deliberately reports counts only: provider errors must never
+// leak prompt or tool-output content through the CLI.
+func writeScanWarnings(result scan.Result, errOut io.Writer) {
+	ids := make([]string, 0, len(result.PerTool))
+	for id := range result.PerTool {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if count := result.PerTool[id].ParseErrors; count > 0 {
+			fmt.Fprintf(errOut, "warning: %s: %d parse errors\n", id, count)
+		}
+	}
 }

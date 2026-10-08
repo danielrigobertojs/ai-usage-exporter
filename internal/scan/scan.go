@@ -24,11 +24,16 @@ import (
 // ToolResult reports what Run observed for one provider during a single
 // scan, independent of whether any of its events survived aggregation.
 type ToolResult struct {
-	Available    bool // at least one source was found and at least one read fully
-	FilesScanned int
-	FilesSkipped int
-	ParseErrors  int
-	BudgetHit    bool
+	Available            bool // at least one source was found and at least one read fully
+	FilesScanned         int
+	FilesSkipped         int
+	FilesSkippedBySize   int
+	FilesSkippedByType   int
+	FilesSkippedByBudget int
+	ParseErrors          int
+	FirstParseError      string
+	BudgetHit            bool
+	ResolvedRoots        []string
 }
 
 // Result is everything a single call to Run produces. It is immutable once
@@ -110,9 +115,13 @@ func scanProvider(ctx context.Context, p provider.Provider, env provider.Env, b 
 	}
 
 	tr := ToolResult{
-		FilesScanned: len(sources),
-		FilesSkipped: stats.FilesSkipped,
-		BudgetHit:    stats.BudgetHit,
+		FilesScanned:         len(sources),
+		FilesSkipped:         stats.FilesSkipped,
+		FilesSkippedBySize:   stats.FilesSkippedBySize,
+		FilesSkippedByType:   stats.FilesSkippedByType,
+		FilesSkippedByBudget: stats.FilesSkippedByBudget,
+		BudgetHit:            stats.BudgetHit,
+		ResolvedRoots:        stats.ResolvedRoots,
 	}
 
 	successes := 0
@@ -125,6 +134,9 @@ func scanProvider(ctx context.Context, p provider.Provider, env provider.Env, b 
 		})
 		if parseErr != nil {
 			tr.ParseErrors++
+			if tr.FirstParseError == "" {
+				tr.FirstParseError = parseErr.Error()
+			}
 			continue
 		}
 		successes++
