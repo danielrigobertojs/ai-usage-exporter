@@ -48,7 +48,7 @@ sudo systemctl enable --now ai-usage-exporter.service
 ```
 
 The service has `Restart=on-failure`. El exporter reescanea el historial
-completo cada 60 segundos por defecto; no necesitas el timer de refresco para
+full scan every 60 seconds by default; you do not need the refresh timer to
 tener datos vivos. Si prefieres un snapshot congelado, configura
 `AI_USAGE_SCAN_INTERVAL=0` en la unidad principal.
 
@@ -99,18 +99,6 @@ Copy `deploy/launchd/io.github.ai-usage-exporter.plist` into
 launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/io.github.ai-usage-exporter.plist
 ```
 
-El exporter de la plist principal reescanea cada 60 segundos por defecto. Para
-desactivarlo, añade `AI_USAGE_SCAN_INTERVAL=0` al entorno de esa plist; no hace
-falta cargar la plist de refresco para la monitorización viva.
-
-## Logging y arranque degradado
-
-El exporter escribe logs estructurados en stderr. Configura
-`AI_USAGE_LOG_LEVEL` (`debug`, `info`, `warn` o `error`) y
-`AI_USAGE_LOG_FORMAT` (`text` o `json`) en el entorno del servicio. Ver el
-[contrato completo de logging](logging.md).
-
-Si el escaneo inicial vence su límite, el proceso sigue atendiendo `/metrics`
-con `ai_usage_scan_success 0` y sin métricas de uso truncadas. Para preferir el
-comportamiento estricto en un supervisor, configura
-`AI_USAGE_FAIL_ON_STARTUP_SCAN_ERROR=true`.
+The exporter in the main plist rescans every 60 seconds by default. To disable
+it, add `AI_USAGE_SCAN_INTERVAL=0` to that plist's environment; you do not need
+to load the refresh plist for live monitoring.

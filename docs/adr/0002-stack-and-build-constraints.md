@@ -1,77 +1,77 @@
-# ADR-002: Stack y restricciones de compilación
+#ADR-002: Stack and compilation restrictions
 
-- Fecha: 2026-10-02
-- Estado: Aceptado
-- Revisión: reconsiderar si surge un requisito que solo un driver CGO de
-  SQLite pueda cumplir (ver "Condición de reapertura")
+- Date: 2026-10-02
+- Status: Accepted
+- Review: reconsider if a requirement arises that only one CGO driver
+SQLite can comply (see "Reopening condition")
 
-## Contexto
+## Context
 
-El entregable de `ai-usage-exporter` es un binario único que un operador
-descarga y ejecuta directamente — sin runtime, sin contenedor obligatorio,
-sin pasos de instalación adicionales — en darwin, linux y windows, cada uno
-en amd64 y arm64 (6 combinaciones). Uno de los providers planeados (OpenCode)
-lee una base SQLite (`~/.local/share/opencode/opencode.db`).
+The `ai-usage-exporter` deliverable is a single binary that an operator
+download and run directly — no runtime, no mandatory container,
+no additional installation steps — on darwin, linux and windows, each
+in amd64 and arm64 (6 combinations). One of the planned providers (OpenCode)
+reads an SQLite database (`~/.local/share/opencode/opencode.db`).
 
-El driver de SQLite más conocido en Go, `mattn/go-sqlite3`, usa CGO: enlaza
-la librería C de SQLite. Eso exige un toolchain de C disponible (y
-configurado para la arquitectura destino) en cada entorno donde se compile,
-lo que rompe el cross-compilation de un solo `go build` por plataforma y
-complica cualquier pipeline de CI que no tenga ese toolchain preinstalado
-para las 6 combinaciones de destino.
+The most popular SQLite driver in Go, `mattn/go-sqlite3`, uses CGO: link
+the SQLite C library. That requires an available C toolchain (and
+configured for the target architecture) in each environment where it is compiled,
+which breaks the cross-compilation of a single `go build` per platform and
+complicates any CI pipeline that does not have that toolchain pre-installed
+for the 6 target combinations.
 
-## Decisión
+## Decision
 
-- **Go 1.25 o superior** como versión mínima del toolchain (`go.mod` fija
-  `go 1.25`).
-- **`CGO_ENABLED=0` es obligatorio**, no una preferencia de estilo. Se aplica
-  explícitamente en `make build` y `make cross`, y se verifica en CI.
-- Como consecuencia directa, el driver de SQLite para el provider de
-  OpenCode debe ser **`modernc.org/sqlite`** (implementación pura en Go,
-  transpilada desde SQLite en C). **Nunca** `mattn/go-sqlite3` ni ningún otro
-  driver que requiera CGO.
-- Dependencias de runtime permitidas hoy, sin ampliar este ADR:
-  - `github.com/prometheus/client_golang` — cliente oficial de métricas de
-    Prometheus; es el estándar de facto y evita reimplementar el formato de
-    exposición y el servidor de scraping.
-  - `modernc.org/sqlite` — único driver SQLite puro en Go con soporte
-    maduro de modo solo-lectura y WAL, necesario para el provider de
-    OpenCode sin romper la restricción de CGO.
-  - `github.com/spf13/cobra` — estructura de subcomandos de la CLI
-    (`serve`, `version`, etc.) cuando el binario los necesite; evita
-    reimplementar parsing de flags y ayuda por subcomando a mano.
+- **Go 1.25 or higher** as minimum toolchain version (`go.mod` fixed
+`go 1.25`).
+- **`CGO_ENABLED=0` is required**, not a style preference. Applies
+explicitly in `make build` and `make cross`, and is checked in CI.
+- As a direct consequence, the SQLite driver for the provider
+OpenCode must be **`modernc.org/sqlite`** (pure implementation in Go,
+transpiled from SQLite in C). **Never** `mattn/go-sqlite3` or any other
+driver that requires CGO.
+- Runtime dependencies allowed today, without extending this ADR:
+- `github.com/prometheus/client_golang` — official metrics client
+Prometheus is the de facto standard and avoids reimplementing the format of
+exposure and scraping server.
+- `modernc.org/sqlite` — only pure SQLite driver in Go with support
+mature read-only mode and WAL, required for the provider
+OpenCode without breaking the CGO restriction.
+- `github.com/spf13/cobra` — CLI subcommand structure
+(`serve`, `version`, etc.) when the binary needs them; avoid
+reimplement flag parsing and subcommand help by hand.
 
-  Cualquier dependencia de runtime fuera de esta lista se justifica
-  ampliando este ADR en el issue correspondiente antes de añadirla al
-  `go.mod`.
+Any runtime dependencies outside of this list are justified
+expanding this ADR in the corresponding issue before adding it to the
+`go.mod`.
 
-## Alternativas descartadas
+## Discarded alternatives
 
-**`mattn/go-sqlite3` (o cualquier driver basado en CGO).** Es más maduro y
-previsiblemente más rápido que un driver puro en Go, pero exige
-`CGO_ENABLED=1` y un toolchain de C por plataforma destino. Eso contradice
-directamente el requisito de un binario único cross-compilado sin
-dependencias externas en tiempo de build, y complica CI (imágenes con
-toolchains de C para 6 combinaciones OS/arch en lugar de solo el toolchain de
-Go). Se descarta mientras el binario único sin CGO sea un requisito del
-producto.
+**`mattn/go-sqlite3` (or any CGO-based driver).** It is more mature and
+predictably faster than a pure driver in Go, but requires
+`CGO_ENABLED=1` and a C toolchain per target platform. That contradicts
+directly the requirement for a single cross-compiled binary without
+external dependencies at build time, and complicates CI (images with
+C toolchains for 6 OS/arch combinations instead of just the C toolchain
+Go). Discarded as long as the single binary without CGO is a requirement of the
+product.
 
-## Consecuencias
+## Consequences
 
-- `make cross` debe fallar el build si cualquier paquete en la ruta de
-  compilación requiere CGO; en la práctica esto se verifica compilando con
-  `CGO_ENABLED=0` explícito para las 6 combinaciones de `GOOS`/`GOARCH`.
-- El provider de OpenCode paga el costo de rendimiento y madurez relativo de
-  `modernc.org/sqlite` frente a un driver CGO; se acepta porque el volumen de
-  datos esperado (logs locales de un único usuario) no lo hace un cuello de
-  botella.
-- Cualquier dependencia nueva de runtime (no solo de test) requiere
-  justificación escrita en el issue que la introduce antes de hacer merge.
+- `make cross` should fail the build if any packages in the path
+compilation requires CGO; In practice this is verified by compiling with
+Explicit `CGO_ENABLED=0` for all 6 `GOOS`/`GOARCH` combinations.
+- The OpenCode provider pays the cost of performance and relative maturity of
+`modernc.org/sqlite` vs. a CGO driver; is accepted because the volume of
+expected data (local logs from a single user) does not make it a neck
+bottle.
+- Any new runtime dependency (not just test) requires
+justification written in the issue that introduces it before doing merge.
 
-## Condición de reapertura
+## Reopening condition
 
-Reabrir esta decisión si aparece un requisito que solo un driver CGO de
-SQLite pueda satisfacer (por ejemplo, una limitación de rendimiento o
-compatibilidad de `modernc.org/sqlite` que bloquee el provider de OpenCode) y
-el equipo decide aceptar el costo de requerir un toolchain de C en el pipeline
-de build para ese caso.
+Reopen this decision if a requirement appears that only one CGO driver
+SQLite may satisfy (for example, a performance limitation or
+compatibility of `modernc.org/sqlite` that blocks the OpenCode provider) and
+the team decides to accept the cost of requiring a C toolchain in the pipeline
+of build for that case.

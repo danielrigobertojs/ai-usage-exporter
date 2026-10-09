@@ -102,7 +102,7 @@ origin, since the same record's arithmetic says `reasoning` both fits inside
 derive the two counters from the same source for these, so neither branch of
 the formula above reconciles them; `max(0, output - reasoning)` is kept
 because it has the lower error bound of the two measured. See [ADR-004's
-error-bound table](../adr/0004-token-class-normalization.md#los-6-registros-aritmeticamente-contradictorios)
+error-bound table](../adr/0004-token-class-normalization.md#the-6-arithmetically-contradictory-records)
 for the measured cost of each alternative. For these 6 records only, the
 five emitted classes sum to `total + (reasoning - output)`, not `total` -
 fixed in the test fixture as `msg_7` (`internal/providers/opencode/testdata/make_fixture.go`,

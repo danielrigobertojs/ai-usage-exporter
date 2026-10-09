@@ -1,77 +1,77 @@
-# Catálogo de precios (`internal/pricing`)
+# Price catalog (`internal/pricing`)
 
-`internal/pricing` resuelve tarifas en USD por token para un par
-(`tool`, `model`) y las aplica a los contadores de un `model.UsageEvent`
-para producir `ai_usage_cost_usd`. Este documento es la fuente de verdad
-de ese paquete: cualquier cambio en el orden de resolución, el formato de
-los archivos de precios o las rutas por plataforma debe actualizarlo en el
-mismo PR.
+`internal/pricing` resolves USD fees per token for a pair
+(`tool`, `model`) and applies them to the counters of a `model.UsageEvent`
+to produce `ai_usage_cost_usd`. This document is the source of truth
+of that package: any changes to the resolution order, the format of
+pricing files or routes by platform must be updated in the
+same PR.
 
-**Lo que expone esta métrica es una estimación a precio de lista público en
-USD del proveedor de primera parte, no una factura.** No reconcilia
-descuentos contractuales, planes de suscripción, créditos, redondeo por
-proveedor, ni el campo `cost` nativo que algunos formatos (por ejemplo
-OpenCode) ya incluyen — esa reconciliación es una decisión del collector que
-consume este paquete, documentada allí.
+**What this metric shows is an estimate at the public list price in
+USD from first party supplier, not an invoice.** Does not reconcile
+contractual discounts, subscription plans, credits, rounding by
+provider, nor the native `cost` field that some formats (e.g.
+OpenCode) already include — that reconciliation is a decision of the collector who
+consumes this package, documented there.
 
-## Orden de resolución
+## Resolution order
 
 ```
-overlay del usuario  >  caché de models.dev  >  tabla embebida
+user overlay  >  models.dev cache  >  embedded table
 ```
 
-`Load` resuelve en ese orden y **nunca devuelve error** por una causa de
-red, de caché o de datos: cada nivel que falla degrada silenciosamente al
-siguiente, y la tabla embebida (compilada en el binario vía `go:embed`) es
-el suelo que garantiza que siempre hay un precio que servir, o una
-ausencia explícita (`Lookup` devuelve `false`) en vez de un `0` falso.
+`Load` resolves in that order and **never returns an error** for a cause of
+network, cache, or data: each level that fails silently degrades the
+following, and the embedded table (compiled into the binary via `go:embed`) is
+the ground that guarantees that there is always a price to serve, or a
+explicit absence (`Lookup` returns `false`) instead of a false `0`.
 
-`Catalog.Source()` informa cuál es el nivel más alto que tiene datos
-cargados — `"overlay"`, `"models.dev"` o `"embedded"` — no la procedencia
-de cada modelo individual. Si el overlay del usuario redefine un solo
-modelo, `Source()` ya reporta `"overlay"` aunque el resto de los modelos se
-sigan resolviendo por niveles inferiores.
+`Catalog.Source()` reports which is the highest level that has data
+loaded — `"overlay"`, `"models.dev"` or `"embedded"` — not the provenance
+of each individual model. If the user overlay redefines a single
+model, `Source()` already reports `"overlay"` although the rest of the models are
+continue solving at lower levels.
 
-Dentro de cada nivel, `Lookup(tool, modelID)` prueba primero la clave
-desnuda del modelo (`modelID`) y solo si no existe cae a la clave
-cualificada por herramienta (`tool:modelID`). Un modelo ausente en los tres
-niveles devuelve `(Rates{}, false)`: un modelo desconocido **no vale
-$0**, debe quedar observable como "sin precio".
+Within each level, `Lookup(tool, modelID)` first tests the key
+naked of the model (`modelID`) and only if it does not exist it falls to the key
+qualified by tool (`tool:modelID`). A model absent in all three
+levels returns `(Rates{}, false)`: an unknown model **not valid
+$0**, should remain observable as "no price".
 
-## Caché de models.dev
+## models.dev cache
 
-- Fuente: `https://models.dev/api.json` (dataset MIT de `sst/models.dev`;
-  ver `NOTICE`).
-- Caché local en `<Config.CacheDir>/models-dev-v1.json`. Por defecto,
-  `Config.CacheDir` es `os.UserCacheDir()/ai-usage-exporter`.
-- TTL de 24 h por defecto (`Config.TTL`), validado contra el `mtime` del
-  archivo de caché — no hay metadatos adicionales.
-- Si el refresco de red falla (error de conexión, status distinto de 200,
-  cuerpo no parseable) y existe una caché previa, **esa caché sigue
-  sirviendo** aunque esté vencida. Solo si no hay ninguna caché utilizable
-  se cae a la tabla embebida.
-- Una caché corrupta (bytes inválidos) se trata igual que una caché
-  ausente: se ignora y se intenta el nivel siguiente, nunca hace panic.
-- La petición manda `User-Agent: ai-usage-exporter/<version> (+<repo>)`,
-  como cortesía identificable hacia quien mantiene el dataset gratis.
-- Cuando un ID de modelo aparece bajo varios providers, se prefiere una lista
-  ordenada de proveedores de primera parte (`anthropic`, `openai`, `opencode`,
-  ...); si ninguno coincide, gana el provider con ID alfabéticamente primero.
-  Es una heurística de procedencia, no una atribución de facturación. Ver
-  ADR-006.
+- Source: `https://models.dev/api.json` (MIT dataset of `sst/models.dev`;
+see `NOTICE`).
+- Local cache in `<Config.CacheDir>/models-dev-v1.json`. Default,
+`Config.CacheDir` is `os.UserCacheDir()/ai-usage-exporter`.
+- Default 24h TTL (`Config.TTL`), validated against the `mtime` of the
+cache file — no additional metadata.
+- If the network refresh fails (connection error, status other than 200,
+non-parseable body) and a previous cache exists, **that cache is still
+serving** even if it is expired. Only if there is no usable cache
+falls to the embedded table.
+- A corrupt cache (invalid bytes) is treated the same as a cache
+absent: it is ignored and the next level is attempted, it never panics.
+- The request sends `User-Agent: ai-usage-exporter/<version> (+<repo>)`,
+as an identifiable courtesy towards whoever maintains the free dataset.
+- When a model ID appears under multiple providers, a list is preferred
+ordered from first-party providers (`anthropic`, `openai`, `opencode`,
+...); if none match, the provider with ID alphabetically first wins.
+It is a provenance heuristic, not a billing attribution. See
+ADR-006.
 
-### Forzar modo offline
+### Force offline mode
 
-`Config.Offline = true` evita que `Load` haga ninguna petición de red: usa
-la caché local si existe (incluso vencida) o cae directamente a la tabla
-embebida. Útil para pruebas, entornos air-gapped, o para evitar el costo
-de una llamada de red en cada arranque cuando el operador prefiere refrescar
-el precio manualmente.
+`Config.Offline = true` prevents `Load` from making any network requests: use
+the local cache if it exists (even expired) or falls directly to the table
+embedded Useful for testing, air-gapped environments, or to avoid the cost
+of a network call at each start when the operator prefers to refresh
+the price manually.
 
-## El overlay del usuario
+## The user overlay
 
-El overlay tiene **el mismo formato** que la tabla embebida, para que un
-usuario pueda copiar `embedded.json` y editarlo:
+The overlay has **the same format** as the embedded table, so that a
+user can copy `embedded.json` and edit it:
 
 ```json
 {
@@ -82,36 +82,36 @@ usuario pueda copiar `embedded.json` y editarlo:
 }
 ```
 
-Los valores son **USD por millón de tokens** (igual que models.dev);
-`Load` los divide por 1e6 al construir `Rates`. Un modelo que el overlay no
-menciona sigue resolviéndose por los niveles inferiores — el overlay
-sobreescribe por modelo, no reemplaza el catálogo entero.
+Values ​​are **USD per million tokens** (same as models.dev);
+`Load` divides them by 1e6 when constructing `Rates`. A model that the overlay does not
+mentioned continues to be resolved by the lower levels — the overlay
+it overwrites by model, it does not replace the entire catalog.
 
-### Ruta del overlay por plataforma
+### Overlay path by platform
 
-Por defecto, `Config.OverlayPath` es `<xdg_config>/ai-usage-exporter/pricing.json`,
-resuelto con `os.UserConfigDir()` — nunca una ruta `~` construida a mano:
+By default, `Config.OverlayPath` is `<xdg_config>/ai-usage-exporter/pricing.json`,
+resolved with `os.UserConfigDir()` — never a hand-built `~` path:
 
-| SO | Ruta típica |
+| OS | Typical route |
 |---|---|
-| Linux | `$XDG_CONFIG_HOME/ai-usage-exporter/pricing.json` (o `~/.config/...` si la variable no está definida) |
+| Linux | `$XDG_CONFIG_HOME/ai-usage-exporter/pricing.json` (or `~/.config/...` if the variable is not defined) |
 | macOS | `~/Library/Application Support/ai-usage-exporter/pricing.json` |
 | Windows | `%AppData%\ai-usage-exporter\pricing.json` |
 
-Un overlay ausente no es una condición de error: `Load` simplemente no
-tiene nada que superponer. Un overlay presente pero corrupto se ignora de
-la misma forma que una caché corrupta.
+A missing overlay is not an error condition: `Load` simply does not
+has nothing to overlap. A present but corrupt overlay is ignored
+the same way as a corrupt cache.
 
-## Clases de token y `Rates`
+## Token Classes and `Rates`
 
-`Rates` son USD por **un** token (nunca por millón), con un campo
-independiente por clase: `Input`, `Output`, `CacheRead`, `CacheWrite`,
-`Reasoning`. `CostUSD` suma cada clase de tokens del evento contra su
-tarifa correspondiente de forma independiente — nunca mezcla clases ni
-aplica una tarifa única a todos los tokens.
+`Rates` are USD per **one** token (never per million), with a field
+independent per class: `Input`, `Output`, `CacheRead`, `CacheWrite`,
+`Reasoning`. `CostUSD` sums each event token class against its
+corresponding fare independently — never mix classes or
+applies a single fee to all tokens.
 
-## Atribución
+## Attribution
 
-Los datos de precios derivan de `sst/models.dev` (licencia MIT). La
-atribución obligatoria vive en `NOTICE` y, para la tabla embebida, en los
-campos `retrieved_at` y `attribution` de `internal/pricing/embedded.json`.
+Pricing data is derived from `sst/models.dev` (MIT license). The
+mandatory attribution lives in `NOTICE` and, for the embedded table, in the
+`retrieved_at` and `attribution` fields of `internal/pricing/embedded.json`.
