@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -73,6 +74,9 @@ func exporterBinary(t *testing.T) string {
 			return
 		}
 		out := filepath.Join(os.TempDir(), "aue-startup-contract-"+fmt.Sprint(os.Getpid()))
+		if runtime.GOOS == "windows" {
+			out += ".exe"
+		}
 		cmd := exec.Command("go", "build", "-o", out, "./cmd/ai-usage-exporter")
 		cmd.Dir = root
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
