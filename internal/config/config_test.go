@@ -51,6 +51,17 @@ func TestLoggingDefaultsAndEnvironment(t *testing.T) {
 	}
 }
 
+func TestFailOnStartupScanErrorCanBeConfigured(t *testing.T) {
+	cfg, err := Load("", envMap(map[string]string{"AI_USAGE_FAIL_ON_STARTUP_SCAN_ERROR": "true"}), nil)
+	if err != nil || !cfg.FailOnStartupScanError {
+		t.Fatalf("environment config = %+v, %v; want enabled", cfg, err)
+	}
+	cfg, err = Load("", noEnv, []string{"--fail-on-startup-scan-error"})
+	if err != nil || !cfg.FailOnStartupScanError {
+		t.Fatalf("flag config = %+v, %v; want enabled", cfg, err)
+	}
+}
+
 // TestLoadFileOverridesListenAndScanInterval covers step 1: testdata's
 // config.yaml overrides listen and scan_interval but leaves every other
 // field at its default.

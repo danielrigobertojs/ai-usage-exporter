@@ -36,6 +36,10 @@ func idFrom(ctx context.Context) string {
 	return "unknown"
 }
 
+// ID returns the scan correlation ID, or "unknown" for contexts not created
+// with WithID. It lets callers correlate publication with Run's terminal log.
+func ID(ctx context.Context) string { return idFrom(ctx) }
+
 // ToolResult reports what Run observed for one provider during a single
 // scan, independent of whether any of its events survived aggregation.
 type ToolResult struct {
@@ -69,8 +73,8 @@ type Result struct {
 // A provider that fails - Discover errors, or Parse fails on some or all
 // of its sources - never aborts the others: its failure is folded into its
 // own ToolResult.ParseErrors/Available instead of being returned from Run.
-// Run's error return is reserved for ctx already being done when it is
-// called.
+// Run returns an error when its context is cancelled before or during the
+// scan. Callers must not publish the partial aggregate in that case.
 func Run(ctx context.Context, reg *provider.Registry, env provider.Env, b provider.Budget, now time.Time, tz *time.Location) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
@@ -109,9 +113,7 @@ func Run(ctx context.Context, reg *provider.Registry, env provider.Env, b provid
 			return nil
 		})
 	}
-	if err := g.Wait(); err != nil {
-		logger.Error("scan worker group failed", "error_type", fmt.Sprintf("%T", err))
-	}
+	_ = g.Wait() // workers deliberately return nil; provider failures are per-tool.
 	if err := ctx.Err(); err != nil {
 		logger.Error("scan cancelled", "error_type", fmt.Sprintf("%T", err))
 		return Result{}, err
@@ -167,6 +169,7 @@ func scanProvider(ctx context.Context, p provider.Provider, env provider.Env, b 
 	}
 
 	successes := 0
+	cancelled := 0
 	for i, src := range sources {
 		started := time.Now()
 		parseErr := p.Parse(ctx, src, func(e model.UsageEvent) error {
@@ -176,7 +179,11 @@ func scanProvider(ctx context.Context, p provider.Provider, env provider.Env, b 
 			return nil
 		})
 		if parseErr != nil {
-			logger.Warn("source parse failed", "source", i+1, "error_type", fmt.Sprintf("%T", parseErr))
+			if ctx.Err() != nil || parseErr == context.Canceled || parseErr == context.DeadlineExceeded {
+				cancelled++
+			} else {
+				logger.Warn("source parse failed", "source", i+1, "error_type", fmt.Sprintf("%T", parseErr))
+			}
 			tr.ParseErrors++
 			if tr.FirstParseError == "" {
 				tr.FirstParseError = parseErr.Error()
@@ -185,6 +192,9 @@ func scanProvider(ctx context.Context, p provider.Provider, env provider.Env, b 
 		}
 		logger.Debug("source read", "source", i+1, "path", src.Path, "bytes", src.Size, "duration", time.Since(started))
 		successes++
+	}
+	if cancelled > 0 {
+		logger.Warn("source parsing cancelled", "sources", cancelled, "error_type", fmt.Sprintf("%T", ctx.Err()))
 	}
 	tr.Available = successes > 0
 

@@ -13,6 +13,7 @@ package pricing
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -51,6 +52,7 @@ type Catalog interface {
 func CostUSD(c Catalog, e model.UsageEvent) (float64, bool) {
 	rates, ok := c.Lookup(e.Tool, e.Model)
 	if !ok {
+		slog.Warn("model has no pricing rate", "tool", e.Tool, "model", e.Model)
 		return 0, false
 	}
 

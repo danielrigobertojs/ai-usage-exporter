@@ -23,15 +23,16 @@ import (
 
 // Config is the exporter's fully resolved runtime configuration.
 type Config struct {
-	Listen       string        `yaml:"listen"`
-	MetricsPath  string        `yaml:"metrics_path"`
-	ScanInterval time.Duration `yaml:"scan_interval"`
-	ScanTimeout  time.Duration `yaml:"scan_timeout"`
-	Timezone     string        `yaml:"timezone"`
-	Providers    []string      `yaml:"providers"`
-	LogLevel     string        `yaml:"log_level"`
-	LogFormat    string        `yaml:"log_format"`
-	Labels       struct {
+	Listen                 string        `yaml:"listen"`
+	MetricsPath            string        `yaml:"metrics_path"`
+	ScanInterval           time.Duration `yaml:"scan_interval"`
+	ScanTimeout            time.Duration `yaml:"scan_timeout"`
+	Timezone               string        `yaml:"timezone"`
+	Providers              []string      `yaml:"providers"`
+	LogLevel               string        `yaml:"log_level"`
+	LogFormat              string        `yaml:"log_format"`
+	FailOnStartupScanError bool          `yaml:"fail_on_startup_scan_error"`
+	Labels                 struct {
 		Project bool `yaml:"project"`
 	} `yaml:"labels"`
 	Pricing pricing.Config `yaml:"pricing"`
@@ -87,12 +88,12 @@ func Load(path string, env func(string) string, args []string) (Config, error) {
 		switch {
 		case err == nil:
 			if err := yaml.Unmarshal(data, &cfg); err != nil {
-				return Config{}, fmt.Errorf("config: parse %s: %w", path, err)
+				return Config{}, fmt.Errorf("config: parse configuration file: %w", err)
 			}
 		case errors.Is(err, os.ErrNotExist):
 			// No config file is the common case; defaults stand.
 		default:
-			return Config{}, fmt.Errorf("config: read %s: %w", path, err)
+			return Config{}, fmt.Errorf("config: read configuration file: %w", err)
 		}
 	}
 
@@ -148,6 +149,13 @@ func applyEnv(cfg *Config, env func(string) string) error {
 	if v := env("AI_USAGE_LOG_FORMAT"); v != "" {
 		cfg.LogFormat = strings.ToLower(v)
 	}
+	if v := env("AI_USAGE_FAIL_ON_STARTUP_SCAN_ERROR"); v != "" {
+		b, err := parseBool(v)
+		if err != nil {
+			return fmt.Errorf("config: AI_USAGE_FAIL_ON_STARTUP_SCAN_ERROR: %w", err)
+		}
+		cfg.FailOnStartupScanError = b
+	}
 	if v := env("AI_USAGE_LABELS_PROJECT"); v != "" {
 		b, err := parseBool(v)
 		if err != nil {
@@ -167,6 +175,7 @@ func applyFlags(cfg *Config, args []string) error {
 	fs := flag.NewFlagSet("ai-usage-exporter", flag.ContinueOnError)
 
 	var listen, metricsPath, scanInterval, scanTimeout, timezone, providers, labelsProject, logLevel, logFormat string
+	var failOnStartupScanError bool
 	fs.StringVar(&listen, "listen", "", "address to listen on, e.g. 127.0.0.1:9477")
 	fs.StringVar(&metricsPath, "metrics-path", "", "HTTP path to serve /metrics on")
 	fs.StringVar(&scanInterval, "scan-interval", "", "re-scan interval, e.g. 5m (0 disables re-scanning)")
@@ -176,6 +185,7 @@ func applyFlags(cfg *Config, args []string) error {
 	fs.StringVar(&labelsProject, "labels-project", "", "true/false: opt into the project label (see docs/metrics.md)")
 	fs.StringVar(&logLevel, "log-level", "", "debug, info, warn, or error")
 	fs.StringVar(&logFormat, "log-format", "", "text or json")
+	fs.BoolVar(&failOnStartupScanError, "fail-on-startup-scan-error", false, "exit when the initial scan fails")
 
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)
@@ -219,6 +229,15 @@ func applyFlags(cfg *Config, args []string) error {
 	}
 	if logFormat != "" {
 		cfg.LogFormat = strings.ToLower(logFormat)
+	}
+	flagSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "fail-on-startup-scan-error" {
+			flagSet = true
+		}
+	})
+	if flagSet {
+		cfg.FailOnStartupScanError = failOnStartupScanError
 	}
 	return nil
 }

@@ -8,6 +8,7 @@
 package collector
 
 import (
+	"log/slog"
 	"runtime"
 	"sync"
 
@@ -44,9 +45,10 @@ type Collector struct {
 	cat  pricing.Catalog
 	opts Options
 
-	mu     sync.RWMutex
-	result scan.Result
-	ready  bool
+	mu          sync.RWMutex
+	result      scan.Result
+	ready       bool
+	scanSuccess bool
 
 	tokens             *prometheus.Desc
 	costUSD            *prometheus.Desc
@@ -59,6 +61,7 @@ type Collector struct {
 	scanFiles          *prometheus.Desc
 	scanErrors         *prometheus.Desc
 	buildInfo          *prometheus.Desc
+	scanSuccessMetric  *prometheus.Desc
 }
 
 // New returns a Collector that prices events against cat and applies opts.
@@ -127,15 +130,36 @@ func New(cat pricing.Catalog, opts Options) *Collector {
 			"Build metadata of the running binary. Value is always 1; the information is in the labels.",
 			[]string{"version", "commit", "go_version"}, nil,
 		),
+		scanSuccessMetric: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "", "scan_success"),
+			"1 if the most recent scan completed and its snapshot is safe to use; 0 if it failed or was cancelled.",
+			nil, nil,
+		),
 	}
 }
 
 // Set atomically replaces the Result Collect serves. Safe to call
 // concurrently with Collect.
 func (c *Collector) Set(r scan.Result) {
+	for key := range r.Snapshot.Tokens {
+		if key.Window == aggregate.WindowAll {
+			if _, ok := c.cat.Lookup(key.Tool, key.Model); !ok {
+				slog.Warn("model has no pricing rate", "tool", key.Tool, "model", key.Model)
+			}
+		}
+	}
 	c.mu.Lock()
 	c.result = r
 	c.ready = true
+	c.scanSuccess = true
+	c.mu.Unlock()
+}
+
+// MarkScanFailure records a failed scan without replacing a previously safe
+// snapshot. Before the first successful scan this leaves usage metrics absent.
+func (c *Collector) MarkScanFailure() {
+	c.mu.Lock()
+	c.scanSuccess = false
 	c.mu.Unlock()
 }
 
@@ -144,6 +168,26 @@ func (c *Collector) Ready() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.ready
+}
+
+// Catalog returns the immutable pricing catalog used by this collector.
+func (c *Collector) Catalog() pricing.Catalog { return c.cat }
+
+// TotalCostUSD returns the aggregate estimated cost for the all-history
+// window. Other windows overlap and must not be added together.
+func TotalCostUSD(cat pricing.Catalog, tokens map[aggregate.TokenKey]int64) float64 {
+	var total float64
+	for key, count := range tokens {
+		if key.Window != aggregate.WindowAll {
+			continue
+		}
+		rates, ok := cat.Lookup(key.Tool, key.Model)
+		if !ok {
+			continue
+		}
+		total += float64(count) * rateFor(key.Class, rates)
+	}
+	return total
 }
 
 // Describe sends every metric Collect can possibly emit, independent of
@@ -160,6 +204,7 @@ func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.scanFiles
 	ch <- c.scanErrors
 	ch <- c.buildInfo
+	ch <- c.scanSuccessMetric
 }
 
 // Collect reads the currently published Result and emits it as constant
@@ -169,10 +214,16 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	c.mu.RLock()
 	result := c.result
 	ready := c.ready
+	scanSuccess := c.scanSuccess
 	c.mu.RUnlock()
 
 	ch <- prometheus.MustNewConstMetric(c.buildInfo, prometheus.GaugeValue, 1,
 		version.Version, version.Commit, runtime.Version())
+	if scanSuccess {
+		ch <- prometheus.MustNewConstMetric(c.scanSuccessMetric, prometheus.GaugeValue, 1)
+	} else {
+		ch <- prometheus.MustNewConstMetric(c.scanSuccessMetric, prometheus.GaugeValue, 0)
+	}
 
 	if !ready {
 		return

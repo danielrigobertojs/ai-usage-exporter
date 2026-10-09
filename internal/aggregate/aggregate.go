@@ -37,6 +37,7 @@ type Snapshot struct {
 	LastEventAt map[string]time.Time
 	Duplicates  int
 	Invalid     int
+	Events      int
 }
 
 // Aggregator accumulates UsageEvents into window-scoped totals. It holds no
@@ -55,6 +56,7 @@ type Aggregator struct {
 
 	duplicates int
 	invalid    int
+	events     int
 }
 
 // New returns an Aggregator that treats now as the scan instant and tz as
@@ -82,6 +84,8 @@ func New(now time.Time, tz *time.Location) *Aggregator {
 // inflating totals when the same message reappears in the logs.
 func (a *Aggregator) Add(e model.UsageEvent) bool {
 	if err := e.Valid(); err != nil {
+		// log/slog belongs at the I/O boundary (scan); this pure package must
+		// remain dependency-free so aggregation is deterministic and testable.
 		a.invalid++
 		return false
 	}
@@ -91,6 +95,7 @@ func (a *Aggregator) Add(e model.UsageEvent) bool {
 		return false
 	}
 	a.seen[e.Key] = struct{}{}
+	a.events++
 
 	windows := Windows(e.Timestamp, a.now, a.tz)
 	for _, w := range windows {
@@ -154,5 +159,6 @@ func (a *Aggregator) Snapshot() Snapshot {
 		LastEventAt: lastEventAt,
 		Duplicates:  a.duplicates,
 		Invalid:     a.invalid,
+		Events:      a.events,
 	}
 }
