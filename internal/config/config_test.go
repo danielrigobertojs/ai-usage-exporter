@@ -35,6 +35,22 @@ func TestDefaultScanIntervalIsOneMinute(t *testing.T) {
 	}
 }
 
+func TestLoggingDefaultsAndEnvironment(t *testing.T) {
+	cfg, err := Load("", envMap(map[string]string{"AI_USAGE_LOG_LEVEL": "debug", "AI_USAGE_LOG_FORMAT": "json"}), nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LogLevel != "debug" || cfg.LogFormat != "json" {
+		t.Errorf("logging = %q/%q, want debug/json", cfg.LogLevel, cfg.LogFormat)
+	}
+	if _, err := Load("", envMap(map[string]string{"AI_USAGE_LOG_LEVEL": "verbose"}), nil); err == nil {
+		t.Error("Load accepted invalid log level")
+	}
+	if _, err := Load("", envMap(map[string]string{"AI_USAGE_LOG_FORMAT": "xml"}), nil); err == nil {
+		t.Error("Load accepted invalid log format")
+	}
+}
+
 // TestLoadFileOverridesListenAndScanInterval covers step 1: testdata's
 // config.yaml overrides listen and scan_interval but leaves every other
 // field at its default.

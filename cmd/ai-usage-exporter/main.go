@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -53,11 +55,18 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
+	configureLogger(cfg)
+	slog.Info("configuration loaded", "log_level", cfg.LogLevel, "log_format", cfg.LogFormat)
 
 	reg, err := all.Registry()
 	if err != nil {
 		return fmt.Errorf("provider registry: %w", err)
 	}
+	ids := make([]string, 0, len(reg.All()))
+	for _, p := range reg.All() {
+		ids = append(ids, p.Descriptor().ID)
+	}
+	slog.Info("providers registered", "providers", strings.Join(ids, ","))
 	reg, err = filterProviders(reg, cfg.Providers)
 	if err != nil {
 		return fmt.Errorf("provider registry: %w", err)
@@ -70,6 +79,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("pricing: %w", err)
 	}
+	slog.Info("pricing catalog loaded", "source", catalog.Source())
 
 	c := collector.New(catalog, collector.Options{ProjectLabel: cfg.Labels.Project})
 
@@ -81,14 +91,14 @@ func run() error {
 		return fmt.Errorf("config: timezone: %w", err)
 	}
 
-	scanCtx, scanCancel := context.WithTimeout(ctx, cfg.ScanTimeout)
+	scanCtx, scanCancel := context.WithTimeout(scan.WithID(ctx, newScanID()), cfg.ScanTimeout)
 	result, err := scan.Run(scanCtx, reg, env, newBudget(), time.Now(), tz)
 	scanCancel()
 	if err != nil {
 		return fmt.Errorf("startup scan: %w", err)
 	}
 	c.Set(result)
-	slog.Info("ai-usage-exporter: startup scan complete", "duration", result.Duration, "tools", len(result.PerTool))
+	slog.Info("snapshot published", "events", eventCount(result), "tokens", tokenCount(result), "series", len(result.Snapshot.Tokens))
 
 	srv := server.New(cfg, c, c.Ready)
 
@@ -101,6 +111,7 @@ func run() error {
 			case <-ctx.Done():
 				return
 			case <-sigCh:
+				slog.Info("rescan signal received", "signal", "SIGHUP")
 				select {
 				case trigger <- struct{}{}:
 				default:
@@ -128,11 +139,47 @@ func run() error {
 	case err := <-errCh:
 		return err
 	case <-stopCh:
+		slog.Info("graceful shutdown requested")
 		cancel()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+func configureLogger(cfg config.Config) {
+	level := slog.LevelInfo
+	switch cfg.LogLevel {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+	opts := &slog.HandlerOptions{Level: level}
+	if cfg.LogFormat == "json" {
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, opts)))
+		return
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, opts)))
+}
+
+func newScanID() string {
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err == nil {
+		return hex.EncodeToString(b)
+	}
+	return fmt.Sprintf("%x", time.Now().UnixNano())
+}
+
+func eventCount(r scan.Result) int { return len(r.Snapshot.LastEventAt) }
+func tokenCount(r scan.Result) int64 {
+	var total int64
+	for _, n := range r.Snapshot.Tokens {
+		total += n
+	}
+	return total
 }
 
 // filterProviders restricts reg to the given IDs, preserving registration

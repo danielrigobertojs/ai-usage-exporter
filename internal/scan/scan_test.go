@@ -4,9 +4,12 @@
 package scan
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -209,6 +212,66 @@ func TestRunRejectsAlreadyDoneContext(t *testing.T) {
 	_, err := Run(ctx, reg, provider.Env{}, testBudget(), time.Now(), time.UTC)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run: error = %v, want context.Canceled", err)
+	}
+}
+
+func TestRunLogsCorrelatedAndRedactsPathsAboveDebug(t *testing.T) {
+	reg := provider.NewRegistry()
+	mustRegister(t, reg, namedFake{id: "alpha", eventsPerSource: 1})
+
+	var logs bytes.Buffer
+	old := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(old) })
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	ctx := WithID(context.Background(), "scan-test")
+	result, err := Run(ctx, reg, fakeEnv("alpha"), testBudget(), time.Now(), time.UTC)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := logs.String()
+	if strings.Contains(got, "/home/user") {
+		t.Fatalf("INFO logs leaked source path: %s", got)
+	}
+	if n := strings.Count(got, "source read"); n != 0 {
+		t.Fatalf("INFO source reads = %d, want 0", n)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
+		if !strings.Contains(line, "scan_id=scan-test") {
+			t.Errorf("log lacks scan id: %s", line)
+		}
+	}
+	if result.PerTool["alpha"].FilesScanned != 1 {
+		t.Fatalf("files scanned = %d, want 1", result.PerTool["alpha"].FilesScanned)
+	}
+
+	logs.Reset()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	_, err = Run(ctx, reg, fakeEnv("alpha"), testBudget(), time.Now(), time.UTC)
+	if err != nil {
+		t.Fatalf("debug Run: %v", err)
+	}
+	if n := strings.Count(logs.String(), "source read"); n != 1 {
+		t.Errorf("DEBUG source reads = %d, want 1; logs: %s", n, logs.String())
+	}
+}
+
+func TestRunParseErrorWarnsWithoutSourceContents(t *testing.T) {
+	reg := provider.NewRegistry()
+	mustRegister(t, reg, namedFake{id: "alpha", failParse: true})
+	var logs bytes.Buffer
+	old := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(old) })
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	_, err := Run(WithID(context.Background(), "parse-test"), reg, fakeEnv("alpha"), testBudget(), time.Now(), time.UTC)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := logs.String()
+	if !strings.Contains(got, "source parse failed") || !strings.Contains(got, "error_type=") {
+		t.Errorf("missing safe parse warning: %s", got)
+	}
+	if strings.Contains(got, "simulated parse failure") || strings.Contains(got, "/home/user") {
+		t.Errorf("parse warning leaked source content/path: %s", got)
 	}
 }
 

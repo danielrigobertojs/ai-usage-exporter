@@ -8,6 +8,7 @@
 package server
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -32,7 +33,11 @@ func New(cfg config.Config, c *collector.Collector, ready func() bool) *http.Ser
 	reg.MustRegister(c)
 
 	mux := http.NewServeMux()
-	mux.Handle(cfg.MetricsPath, promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	metrics := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
+	mux.Handle(cfg.MetricsPath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slog.Debug("metrics scrape served", "method", r.Method)
+		metrics.ServeHTTP(w, r)
+	}))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

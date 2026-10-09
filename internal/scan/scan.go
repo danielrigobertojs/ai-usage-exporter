@@ -10,6 +10,8 @@ package scan
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"runtime"
 	"sync"
 	"time"
@@ -20,6 +22,19 @@ import (
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/model"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider"
 )
+
+type scanIDKey struct{}
+
+// WithID attaches a correlation identifier to every log emitted by Run.
+func WithID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, scanIDKey{}, id)
+}
+func idFrom(ctx context.Context) string {
+	if id, ok := ctx.Value(scanIDKey{}).(string); ok {
+		return id
+	}
+	return "unknown"
+}
 
 // ToolResult reports what Run observed for one provider during a single
 // scan, independent of whether any of its events survived aggregation.
@@ -62,6 +77,9 @@ func Run(ctx context.Context, reg *provider.Registry, env provider.Env, b provid
 	}
 
 	start := time.Now()
+	scanID := idFrom(ctx)
+	logger := slog.Default().With("scan_id", scanID)
+	logger.Info("scan started", "providers", len(reg.All()))
 	agg := aggregate.New(now, tz)
 	var aggMu sync.Mutex
 
@@ -91,10 +109,21 @@ func Run(ctx context.Context, reg *provider.Registry, env provider.Env, b provid
 			return nil
 		})
 	}
-	_ = g.Wait()
+	if err := g.Wait(); err != nil {
+		logger.Error("scan worker group failed", "error_type", fmt.Sprintf("%T", err))
+	}
+	if err := ctx.Err(); err != nil {
+		logger.Error("scan cancelled", "error_type", fmt.Sprintf("%T", err))
+		return Result{}, err
+	}
+	snapshot := agg.Snapshot()
+	logger.Info("scan complete", "duration", time.Since(start), "tools", len(perTool), "events_duplicates", snapshot.Duplicates, "events_invalid", snapshot.Invalid)
+	if snapshot.Duplicates > 0 {
+		logger.Debug("duplicate events discarded", "count", snapshot.Duplicates)
+	}
 
 	return Result{
-		Snapshot: agg.Snapshot(),
+		Snapshot: snapshot,
 		PerTool:  perTool,
 		Duration: time.Since(start),
 	}, nil
@@ -108,10 +137,23 @@ func Run(ctx context.Context, reg *provider.Registry, env provider.Env, b provid
 // design: distinguishing them further belongs in logs, not in a label.
 func scanProvider(ctx context.Context, p provider.Provider, env provider.Env, b provider.Budget, agg *aggregate.Aggregator, mu *sync.Mutex) ToolResult {
 	d := p.Descriptor()
+	logger := slog.Default().With("scan_id", idFrom(ctx), "tool", d.ID)
+	logger.Debug("provider discovery started")
 
 	sources, stats, err := provider.Discover(ctx, d, env, b)
 	if err != nil {
+		logger.Error("provider discovery failed", "error_type", fmt.Sprintf("%T", err))
 		return ToolResult{ParseErrors: 1}
+	}
+	logger.Info("provider discovery complete", "files", len(sources), "skipped", stats.FilesSkipped)
+	for _, root := range stats.ResolvedRoots {
+		logger.Debug("provider root resolved", "root", root)
+	}
+	if stats.FilesSkipped > 0 {
+		logger.Info("sources skipped", "count", stats.FilesSkipped, "size", stats.FilesSkippedBySize, "type", stats.FilesSkippedByType, "budget", stats.FilesSkippedByBudget)
+	}
+	if stats.BudgetHit {
+		logger.Warn("scan budget exhausted", "files", len(sources))
 	}
 
 	tr := ToolResult{
@@ -125,7 +167,8 @@ func scanProvider(ctx context.Context, p provider.Provider, env provider.Env, b 
 	}
 
 	successes := 0
-	for _, src := range sources {
+	for i, src := range sources {
+		started := time.Now()
 		parseErr := p.Parse(ctx, src, func(e model.UsageEvent) error {
 			mu.Lock()
 			agg.Add(e)
@@ -133,12 +176,14 @@ func scanProvider(ctx context.Context, p provider.Provider, env provider.Env, b 
 			return nil
 		})
 		if parseErr != nil {
+			logger.Warn("source parse failed", "source", i+1, "error_type", fmt.Sprintf("%T", parseErr))
 			tr.ParseErrors++
 			if tr.FirstParseError == "" {
 				tr.FirstParseError = parseErr.Error()
 			}
 			continue
 		}
+		logger.Debug("source read", "source", i+1, "path", src.Path, "bytes", src.Size, "duration", time.Since(started))
 		successes++
 	}
 	tr.Available = successes > 0

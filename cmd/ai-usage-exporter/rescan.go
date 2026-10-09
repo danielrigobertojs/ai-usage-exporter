@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -37,8 +39,9 @@ func runRescanLoop(ctx context.Context, reg *provider.Registry, env provider.Env
 
 	var scanning atomic.Bool
 
-	rescan := func() {
+	rescan := func(reason string) {
 		if !scanning.CompareAndSwap(false, true) {
+			slog.Debug("rescan dropped; another scan is in progress", "reason", reason)
 			if onDecision != nil {
 				onDecision(true)
 			}
@@ -47,6 +50,7 @@ func runRescanLoop(ctx context.Context, reg *provider.Registry, env provider.Env
 		if onDecision != nil {
 			onDecision(false)
 		}
+		slog.Info("rescan triggered", "reason", reason)
 		go func() {
 			defer func() {
 				scanning.Store(false)
@@ -59,11 +63,15 @@ func runRescanLoop(ctx context.Context, reg *provider.Registry, env provider.Env
 			if err != nil {
 				tz = time.UTC
 			}
-			result, err := scan.Run(ctx, reg, env, newBudget(), time.Now(), tz)
+			scanCtx, cancel := context.WithTimeout(scan.WithID(ctx, newScanID()), cfg.ScanTimeout)
+			defer cancel()
+			result, err := scan.Run(scanCtx, reg, env, newBudget(), time.Now(), tz)
 			if err != nil {
+				slog.Error("rescan failed", "error_type", fmt.Sprintf("%T", err))
 				return
 			}
 			c.Set(result)
+			slog.Info("snapshot published", "events", eventCount(result), "tokens", tokenCount(result), "series", len(result.Snapshot.Tokens))
 		}()
 	}
 
@@ -72,9 +80,9 @@ func runRescanLoop(ctx context.Context, reg *provider.Registry, env provider.Env
 		case <-ctx.Done():
 			return
 		case <-trigger:
-			rescan()
+			rescan("SIGHUP")
 		case <-tickCh:
-			rescan()
+			rescan("ticker")
 		}
 	}
 }
