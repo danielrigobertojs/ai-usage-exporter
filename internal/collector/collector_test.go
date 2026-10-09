@@ -234,6 +234,30 @@ func TestCollectUnknownModelOmitsCostWithoutCountingAsScanError(t *testing.T) {
 	}
 }
 
+func TestScanSuccessIsAlwaysPresentAndPartialStartupPublishesNoUsage(t *testing.T) {
+	c := New(fixedCatalog(), Options{})
+	families := mustGather(t, c)
+	if got := gaugeValue(families, "ai_usage_scan_success", map[string]string{}); got != 0 {
+		t.Fatalf("initial ai_usage_scan_success = %v, want 0", got)
+	}
+	if findFamily(families, "ai_usage_tokens") != nil {
+		t.Fatal("usage metrics emitted before a complete scan")
+	}
+	c.Set(fixedResult())
+	families = mustGather(t, c)
+	if got := gaugeValue(families, "ai_usage_scan_success", map[string]string{}); got != 1 {
+		t.Fatalf("successful ai_usage_scan_success = %v, want 1", got)
+	}
+	c.MarkScanFailure()
+	families = mustGather(t, c)
+	if got := gaugeValue(families, "ai_usage_scan_success", map[string]string{}); got != 0 {
+		t.Fatalf("failed rescan ai_usage_scan_success = %v, want 0", got)
+	}
+	if !hasSeries(families, "ai_usage_tokens", map[string]string{"tool": "claude-code", "model": "claude-opus-4", "token_type": "input", "window": "all"}) {
+		t.Fatal("failed rescan replaced the prior complete snapshot")
+	}
+}
+
 // TestCollectCostAlwaysComesFromCatalog covers step 9: model.UsageEvent
 // carries no native-cost field, so ai_usage_cost_usd can only ever be
 // derived from the pricing catalog - there is nothing else to reconcile

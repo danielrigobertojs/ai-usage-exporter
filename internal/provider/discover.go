@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"path"
 	"sort"
 	"time"
@@ -94,6 +95,9 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 			// skip this root rather than failing the whole scan.
 			continue
 		}
+		if len(matches) == 0 {
+			slog.Debug("provider root has no matching sources", "tool", d.ID)
+		}
 
 		for _, m := range matches {
 			info, err := fs.Stat(env.FS, m)
@@ -101,6 +105,7 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 				continue
 			}
 			if info.IsDir() {
+				slog.Debug("source skipped", "tool", d.ID, "reason", "directory")
 				stats.FilesSkipped++
 				stats.FilesSkippedByType++
 				continue

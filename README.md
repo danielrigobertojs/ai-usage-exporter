@@ -42,7 +42,10 @@ archivo YAML (`<xdg_config>/ai-usage-exporter/config.yaml`,
 `%APPDATA%\ai-usage-exporter\config.yaml` en Windows) → variables
 `AI_USAGE_*` → flags (`--listen`, `--metrics-path`, `--scan-interval`,
 `--scan-timeout`, `--timezone`, `--providers`, `--labels-project`). Ver
-`internal/config`.
+`internal/config`. El logging estructurado y sus variables (`AI_USAGE_LOG_LEVEL`,
+`AI_USAGE_LOG_FORMAT`) están documentados en [docs/logging.md](docs/logging.md).
+Para que un timeout inicial sea fatal de forma explícita, usa
+`AI_USAGE_FAIL_ON_STARTUP_SCAN_ERROR=true` o `--fail-on-startup-scan-error`.
 
 `/metrics` se sirve a partir de un snapshot completo de los logs
 ([ADR-001](docs/adr/0001-startup-scan-and-gauges.md)), que por defecto se

@@ -163,6 +163,16 @@ reconciliar.
   reescaneo exitoso. Con `scan_interval: 0`, conserva el timestamp del
   escaneo de arranque hasta un `SIGHUP` o un reinicio.
 
+### `ai_usage_scan_success`
+
+- **Tipo:** gauge
+- **Labels:** ninguno
+- **Unidad:** booleano (`0` o `1`)
+- **Significado:** `1` cuando el último escaneo terminó por completo y su
+  snapshot es seguro de publicar; `0` cuando falló o venció el timeout. En un
+  fallo inicial no se exponen gauges de uso parciales. Ver
+  [ADR-007](adr/0007-degraded-startup-scan.md).
+
 ### `ai_usage_scan_duration_seconds`
 
 - **Tipo:** gauge

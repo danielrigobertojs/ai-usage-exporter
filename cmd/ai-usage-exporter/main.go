@@ -30,6 +30,7 @@ import (
 
 func main() {
 	if len(os.Args) > 1 && isCLICommand(os.Args[1]) {
+		cli.ConfigureLogger(os.Args[1:], os.Stderr)
 		os.Exit(cli.Execute(os.Args[1:], os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
@@ -53,7 +54,7 @@ func isCLICommand(first string) bool {
 func run() error {
 	cfg, err := config.Load("", os.Getenv, os.Args[1:])
 	if err != nil {
-		return fmt.Errorf("config: %w", err)
+		return err
 	}
 	configureLogger(cfg)
 	slog.Info("configuration loaded", "log_level", cfg.LogLevel, "log_format", cfg.LogFormat)
@@ -94,11 +95,17 @@ func run() error {
 	scanCtx, scanCancel := context.WithTimeout(scan.WithID(ctx, newScanID()), cfg.ScanTimeout)
 	result, err := scan.Run(scanCtx, reg, env, newBudget(), time.Now(), tz)
 	scanCancel()
-	if err != nil {
+	startupFailed := err != nil
+	if startupFailed && cfg.FailOnStartupScanError {
 		return fmt.Errorf("startup scan: %w", err)
 	}
-	c.Set(result)
-	slog.Info("snapshot published", "events", eventCount(result), "tokens", tokenCount(result), "series", len(result.Snapshot.Tokens))
+	if startupFailed {
+		slog.Error("startup scan failed; serving without usage snapshot", "error_type", fmt.Sprintf("%T", err))
+		c.MarkScanFailure()
+	} else {
+		c.Set(result)
+		logSnapshotPublished(scanIDFromContext(scanCtx), result, catalog)
+	}
 
 	srv := server.New(cfg, c, c.Ready)
 
@@ -173,13 +180,19 @@ func newScanID() string {
 	return fmt.Sprintf("%x", time.Now().UnixNano())
 }
 
-func eventCount(r scan.Result) int { return len(r.Snapshot.LastEventAt) }
+func eventCount(r scan.Result) int { return r.Snapshot.Events }
 func tokenCount(r scan.Result) int64 {
 	var total int64
 	for _, n := range r.Snapshot.Tokens {
 		total += n
 	}
 	return total
+}
+
+func scanIDFromContext(ctx context.Context) string { return scan.ID(ctx) }
+
+func logSnapshotPublished(scanID string, r scan.Result, catalog pricing.Catalog) {
+	slog.Info("snapshot published", "scan_id", scanID, "events", eventCount(r), "tokens", tokenCount(r), "cost_usd", collector.TotalCostUSD(catalog, r.Snapshot.Tokens), "series", len(r.Snapshot.Tokens))
 }
 
 // filterProviders restricts reg to the given IDs, preserving registration

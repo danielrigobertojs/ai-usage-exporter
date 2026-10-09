@@ -68,10 +68,11 @@ func runRescanLoop(ctx context.Context, reg *provider.Registry, env provider.Env
 			result, err := scan.Run(scanCtx, reg, env, newBudget(), time.Now(), tz)
 			if err != nil {
 				slog.Error("rescan failed", "error_type", fmt.Sprintf("%T", err))
+				c.MarkScanFailure()
 				return
 			}
 			c.Set(result)
-			slog.Info("snapshot published", "events", eventCount(result), "tokens", tokenCount(result), "series", len(result.Snapshot.Tokens))
+			logSnapshotPublished(scan.ID(scanCtx), result, c.Catalog())
 		}()
 	}
 

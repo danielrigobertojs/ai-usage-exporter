@@ -20,12 +20,13 @@ JSONL content are never logged.
 | Skipped input, exhausted budget, parse degradation | INFO/WARN | aggregate reason or safe error type |
 | Discovery or rescan failure | ERROR | safe error type |
 
-This is output from the log tests' real scan fixture (the timestamp varies):
+Ejemplo de una ejecución real (la marca de tiempo, duración e identificador
+varían):
 
 ```text
-time=2026-10-09T00:00:00.000Z level=INFO msg="scan started" scan_id=scan-test providers=1
-time=2026-10-09T00:00:00.000Z level=INFO msg="provider discovery complete" scan_id=scan-test tool=alpha files=1 skipped=0
-time=2026-10-09T00:00:00.000Z level=INFO msg="scan complete" scan_id=scan-test duration=0s tools=1 events_duplicates=0 events_invalid=0
+time=2026-10-09T11:02:14.183-06:00 level=INFO msg="scan started" scan_id=e12773fbf885 providers=3
+time=2026-10-09T11:02:14.891-06:00 level=INFO msg="scan complete" scan_id=e12773fbf885 duration=708ms tools=3 events_duplicates=0 events_invalid=0
+time=2026-10-09T11:02:14.892-06:00 level=INFO msg="snapshot published" scan_id=e12773fbf885 events=324 tokens=2946946798 cost_usd=1234.56 series=133
 ```
 
 The equivalent JSON mode is one valid JSON object per line:

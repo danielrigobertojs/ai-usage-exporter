@@ -6,10 +6,13 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -28,6 +31,7 @@ import (
 // Execute is the CLI entry point. Output is injected so callers and tests do
 // not need to redirect process-global stdout/stderr.
 func Execute(args []string, out, errOut io.Writer) int {
+	args = withoutLoggingFlags(args)
 	if len(args) == 0 {
 		fmt.Fprintln(errOut, "serve is handled by the command entry point; Execute requires a subcommand")
 		return 2
@@ -49,6 +53,73 @@ func Execute(args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(errOut, "unknown command %q\n", args[0])
 		return 2
 	}
+}
+
+// ConfigureLogger installs the process logger before Execute performs any I/O.
+// It accepts logging flags on every subcommand while leaving command-specific
+// parsing to the subcommand itself.
+func ConfigureLogger(args []string, errOut io.Writer) {
+	cfg, err := config.Load("", os.Getenv, loggingFlagArgs(args))
+	if err != nil {
+		return // the command will report configuration errors itself.
+	}
+	level := slog.LevelInfo
+	switch cfg.LogLevel {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+	opts := &slog.HandlerOptions{Level: level}
+	if cfg.LogFormat == "json" {
+		slog.SetDefault(slog.New(slog.NewJSONHandler(errOut, opts)))
+	} else {
+		slog.SetDefault(slog.New(slog.NewTextHandler(errOut, opts)))
+	}
+}
+
+func loggingFlagArgs(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--log-level" || args[i] == "--log-format" {
+			if i+1 < len(args) {
+				out = append(out, args[i], args[i+1])
+				i++
+			}
+			continue
+		}
+		if strings.HasPrefix(args[i], "--log-level=") || strings.HasPrefix(args[i], "--log-format=") {
+			out = append(out, args[i])
+		}
+	}
+	return out
+}
+
+func withoutLoggingFlags(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--log-level" || args[i] == "--log-format" {
+			if i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		if strings.HasPrefix(args[i], "--log-level=") || strings.HasPrefix(args[i], "--log-format=") {
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
+}
+
+func newScanID() string {
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err == nil {
+		return hex.EncodeToString(b)
+	}
+	return fmt.Sprintf("%x", time.Now().UnixNano())
 }
 
 // registry and environment are seams for deterministic command tests. Execute
@@ -158,7 +229,7 @@ func report(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, err)
 		return 1
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.ScanTimeout)
+	ctx, cancel := context.WithTimeout(scan.WithID(context.Background(), newScanID()), cfg.ScanTimeout)
 	defer cancel()
 	cat, err := pricing.Load(context.Background(), cfg.Pricing)
 	if err != nil {
@@ -291,7 +362,7 @@ func doctor(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, err)
 		return 1
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.ScanTimeout)
+	ctx, cancel := context.WithTimeout(scan.WithID(context.Background(), newScanID()), cfg.ScanTimeout)
 	defer cancel()
 	cat, err := pricing.Load(context.Background(), cfg.Pricing)
 	if err != nil {
