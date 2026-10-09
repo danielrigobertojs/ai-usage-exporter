@@ -79,14 +79,14 @@ Additive default when `total` is missing is therefore correct in 673.
 Therefore Codex **subtracts** and OpenCode **does not**:
 
 ```
-# Codex: deshace los dos anidamientos sobre los deltas del acumulado
+# Codex: undo both forms of nesting in cumulative deltas
 input      = max(0, Δinput_tokens  - Δcached_input_tokens)
 cache_read = Δcached_input_tokens
 output     = max(0, Δoutput_tokens - Δreasoning_output_tokens)
 reasoning  = Δreasoning_output_tokens
 
-# OpenCode: mapeo directo salvo el anidamiento de reasoning, que se decide
-# por registro con la aritmetica que el propio registro declara
+# OpenCode: map directly unless reasoning is nested, which is decided
+# per record from the arithmetic declared by that record
 nested := tokens.total presente && tokens.total == i + o + cache.read + cache.write && reasoning > 0
 input       = input
 cache_read  = cache.read

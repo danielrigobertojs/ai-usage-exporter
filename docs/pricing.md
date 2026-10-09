@@ -17,7 +17,7 @@ consumes this package, documented there.
 ## Resolution order
 
 ```
-overlay del usuario  >  caché de models.dev  >  tabla embebida
+user overlay  >  models.dev cache  >  embedded table
 ```
 
 `Load` resolves in that order and **never returns an error** for a cause of
