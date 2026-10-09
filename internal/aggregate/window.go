@@ -22,6 +22,13 @@ const (
 // so callers (and tests) get a deterministic slice.
 var orderedWindows = []Window{Window1h, Window24h, Window7d, Window30d, WindowMTD, WindowAll}
 
+// AllWindows returns every supported aggregation window in reporting order.
+// The returned slice is independent, so callers cannot change this package's
+// window contract.
+func AllWindows() []Window {
+	return append([]Window(nil), orderedWindows...)
+}
+
 // Windows returns the windows an event at eventAt belongs to, given a scan
 // instant now and the reporting timezone tz. The 1h/24h/7d/30d windows are
 // plain trailing durations; mtd is a Gregorian calendar-month boundary

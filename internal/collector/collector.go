@@ -251,6 +251,28 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			k.Tool, string(k.Window))
 	}
 
+	// Sessions and tool calls have only the closed, enumerable tool/window
+	// label set. For a provider successfully read in this scan, a missing
+	// aggregation key means zero activity in that window, not unknown data.
+	// Tokens and cost deliberately do not receive this treatment: their model
+	// label is open and zero-filling would invent unbounded series.
+	for tool, tr := range result.PerTool {
+		if !tr.Available {
+			continue
+		}
+		for _, window := range aggregate.AllWindows() {
+			scope := aggregate.ScopeKey{Tool: tool, Window: window}
+			if _, ok := snap.Sessions[scope]; !ok {
+				ch <- prometheus.MustNewConstMetric(c.sessions, prometheus.GaugeValue, 0,
+					tool, string(window))
+			}
+			if _, ok := snap.ToolCalls[scope]; !ok {
+				ch <- prometheus.MustNewConstMetric(c.toolCalls, prometheus.GaugeValue, 0,
+					tool, string(window))
+			}
+		}
+	}
+
 	for tool, ts := range snap.LastEventAt {
 		ch <- prometheus.MustNewConstMetric(c.lastEventTimestamp, prometheus.GaugeValue,
 			float64(ts.Unix()), tool)
