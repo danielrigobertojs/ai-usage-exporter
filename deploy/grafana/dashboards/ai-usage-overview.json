@@ -6,7 +6,7 @@
   "editable": true,
   "graphTooltip": 1,
   "timezone": "browser",
-  "refresh": "",
+  "refresh": "30s",
   "time": { "from": "now-30d", "to": "now" },
   "tags": ["ai-usage-exporter"],
   "templating": {
@@ -50,8 +50,9 @@
         "name": "window",
         "label": "window",
         "type": "custom",
-        "query": "24h,7d,30d,mtd,all",
+        "query": "1h,24h,7d,30d,mtd,all",
         "options": [
+          { "text": "1h", "value": "1h", "selected": false },
           { "text": "24h", "value": "24h", "selected": false },
           { "text": "7d", "value": "7d", "selected": false },
           { "text": "30d", "value": "30d", "selected": true },
