@@ -99,6 +99,6 @@ Copy `deploy/launchd/io.github.ai-usage-exporter.plist` into
 launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/io.github.ai-usage-exporter.plist
 ```
 
-The exporter in the main plist rescans every 60 seconds by default. To
-desactivarlo, añade `AI_USAGE_SCAN_INTERVAL=0` al entorno de esa plist; no hace
-need to load the refresh plist for live monitoring.
+The exporter in the main plist rescans every 60 seconds by default. To disable
+it, add `AI_USAGE_SCAN_INTERVAL=0` to that plist's environment; you do not need
+to load the refresh plist for live monitoring.
