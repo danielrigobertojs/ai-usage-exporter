@@ -1,16 +1,16 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-## ADR-007: arranque degradado cuando falla el escaneo inicial
+## ADR-007: Degraded startup when the initial scan fails
 
-Fecha: 2026-10-09. Revisión: 2027-01-09.
+Date: 2026-10-09. Review: 2027-01-09.
 
-El exporter no termina cuando el escaneo de inicio vence su timeout o falla.
-Sirve `/metrics` con las métricas meta y `ai_usage_scan_success 0`, pero no
-publica métricas de uso de un agregado parcial. El siguiente reescaneo puede
-recuperar normalmente. `--fail-on-startup-scan-error` y
-`AI_USAGE_FAIL_ON_STARTUP_SCAN_ERROR=true` restauran el modo estricto.
+The exporter does not exit when the startup scan times out or fails. It serves
+`/metrics` with its metadata metrics and `ai_usage_scan_success 0`, but does
+not publish usage metrics from a partial aggregate. The next rescan can recover
+normally. `--fail-on-startup-scan-error` and
+`AI_USAGE_FAIL_ON_STARTUP_SCAN_ERROR=true` restore strict mode.
 
-Se descartó fallar siempre porque Prometheus no puede distinguirlo de un host
-caído. También se descartó publicar el resultado parcial: los gauges podrían
-retroceder y producir una lectura falsa. Esta decisión se revisará en la fecha
-indicada al evaluar datos operativos de timeouts.
+Always failing was rejected because Prometheus cannot distinguish it from an
+unreachable host. Publishing a partial result was also rejected: gauges could
+decrease and create a misleading reading. This decision will be reviewed on the
+specified date after evaluating operational timeout data.
