@@ -2,70 +2,70 @@
 
 `internal/provider/claudecode`. `tool` label value: `claude-code`.
 
-### Ruta
+### Route
 
 ```
 ~/.claude/projects/<project-slug>/<session-uuid>.jsonl
 ```
 
-Reubicable con `CLAUDE_CONFIG_DIR` (sustituye por completo la resolución de
-`$HOME` habitual, no se añade a ella). Un archivo por sesión; una línea JSON
-por entrada.
+Relocatable with `CLAUDE_CONFIG_DIR` (completely replaces the resolution of
+usual `$HOME`, it is not added to it). One file per session; a JSON line
+per entry.
 
-### Retención de 30 días — leer antes de interpretar la ventana `all`
+### 30 day retention — read before interpreting the `all` window
 
-Claude Code autoborra sesiones de este directorio a los 30 días (configurable
-por el usuario). Esto no es un detalle de implementación: cambia lo que la
-ventana `all` de este provider significa.
+Claude Code autodelete sessions from this directory after 30 days (configurable
+by the user). This is not an implementation detail: it changes what the
+window `all` of this provider means.
 
-- `all` **no** es "todo el historial de uso de Claude Code" — es "lo que
-  todavía existe en disco en el momento de este escaneo". Una sesión borrada
-  por retención deja de contar para *cualquier* ventana, incluida `all`.
-- Por esto [ADR-001](../adr/0001-startup-scan-and-gauges.md) modela las series
-  de uso como gauges recalculados en cada arranque, nunca como counters: un
-  total re-derivado tras una purga de retención puede ser **menor** que el
-  servido antes del reinicio, y un counter que baja es indistinguible de un
-  reset para `rate()`/`increase()`.
-- Un dashboard que lea `ai_usage_tokens{tool="claude-code", window="all"}`
-  como "uso acumulado de por vida" está mal interpretando la métrica.
+- `all` is **not** "the entire usage history of Claude Code" — it is "whatever
+still exists on disk at the time of this scan." A deleted session
+by retention it stops counting for *any* window, including `all`.
+- This is why [ADR-001](../adr/0001-startup-scan-and-gauges.md) models the series
+of use as gauges recalculated at each start, never as counters: a
+re-derived total after a retention purge may be **less** than the
+served before the reset, and a counter that goes down is indistinguishable from a
+reset for `rate()`/`increase()`.
+- A dashboard that reads `ai_usage_tokens{tool="claude-code", window="all"}`
+as "lifetime cumulative usage" is misinterpreting the metric.
 
-### Mapeo de campos
+### Field Mapping
 
-Solo las entradas `type == "assistant"` con un bloque `message.usage` son
-relevantes; todo lo demás (entradas de usuario, resultados de herramienta,
-resúmenes de compactación) se descarta antes de decodificarse por completo.
+Only `type == "assistant"` entries with a `message.usage` block are
+relevant; everything else (user input, tool results,
+compaction digests) is discarded before being fully decoded.
 
 | JSONL | `model.UsageEvent` |
 |---|---|
 | `uuid` | `Key.MessageID` |
-| `sessionId` (o el nombre del archivo sin extensión, si falta) | `Key.SessionID` |
-| `cwd`, normalizado (o el slug del directorio padre, si falta) | `ProjectID` |
+| `sessionId` (or filename without extension, if missing) | `Key.SessionID` |
+| `cwd`, ​​normalized (or parent directory slug, if missing) | `ProjectID` |
 | `message.model` | `Model` |
-| `timestamp` (RFC3339, con o sin fracción de segundo), convertido a UTC | `Timestamp` |
+| `timestamp` (RFC3339, with or without fraction of a second), converted to UTC | `Timestamp` |
 | `message.usage.input_tokens` | `Tokens[TokenInput]` |
 | `message.usage.output_tokens` | `Tokens[TokenOutput]` |
 | `message.usage.cache_read_input_tokens` | `Tokens[TokenCacheRead]` |
 | `message.usage.cache_creation_input_tokens` | `Tokens[TokenCacheWrite]` |
-| número de bloques `tool_use` en `message.content` | `ToolCalls` |
+| number of `tool_use` blocks in `message.content` | `ToolCalls` |
 
-`ProjectID` solo se convierte en el label `project` si ese label se activa
-explícitamente — ver `docs/metrics.md`; por defecto queda sin usar fuera de
+`ProjectID` only becomes the `project` tag if that tag is activated
+explicitly — see `docs/metrics.md`; by default it remains unused outside
 logs.
 
-### Deduplicación
+### Deduplication
 
-La compactación y `/resume` hacen que la misma entrada `assistant` (mismo
-`uuid`) reaparezca en el JSONL. Este provider **no deduplica**: emite ambas
-apariciones con el mismo `EventKey`, y `internal/aggregate.Aggregator` es el
-único punto que descarta la repetida. Ver
+Compaction and `/resume` make the same entry `assistant` (same
+`uuid`) reappears in the JSONL. This provider **does not deduplicate**: it emits both
+appearances with the same `EventKey`, and `internal/aggregate.Aggregator` is the
+only point that rules out the repeated one. See
 `internal/provider/claudecode/testdata/session_compacted.jsonl`.
 
-### Robustez de parseo
+### Parsing robustness
 
-- Líneas malformadas, sin `usage`, o con `timestamp` inválido se saltan sin
-  abortar el resto del archivo — ver `testdata/session_malformed.jsonl`.
-- Una línea que supera los 8 MiB se descarta sin cargarla en memoria y sin
-  detener el escaneo del resto del archivo.
-- Nunca se decodifica el texto de un mensaje ni la entrada/salida de una
-  herramienta: el struct de decodificación no tiene campo para ello, así que
-  no hay ruta posible por la que ese contenido llegue a un `UsageEvent`.
+- Malformed lines, without `usage`, or with invalid `timestamp` are skipped without
+abort the rest of the file — see `testdata/session_malformed.jsonl`.
+- A line that exceeds 8 MiB is discarded without loading it into memory and without
+stop scanning the rest of the file.
+- The text of a message or the input/output of a message are never decoded.
+tool: the decode struct has no field for it, so
+there is no possible route for that content to reach a `UsageEvent`.

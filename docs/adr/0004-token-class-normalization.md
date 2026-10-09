@@ -1,59 +1,59 @@
-# ADR-004: Normalización de clases de tokens por provider
+#ADR-004: Normalization of token classes by provider
 
-- Fecha: 2026-10-06
-- Estado: Aceptado
-- Revisión: al añadir un provider nuevo, o si un provider upstream cambia el
-  anidamiento de sus contadores
-- Actualizado 2026-10-07: la convención de OpenCode no es uniforme; ver la
-  evidencia de `opencode-go`/`kimi-k2.5` más abajo
+- Date: 2026-10-06
+- Status: Accepted
+- Fix: when adding a new provider, or if an upstream provider changes the
+nesting your counters
+- Updated 2026-10-07: OpenCode convention is not uniform; see the
+evidence from `opencode-go`/`kimi-k2.5` below
 
-## Contexto
+## Context
 
-`docs/metrics.md` establece el invariante de que las cinco clases de
+`docs/metrics.md` establishes the invariant that the five classes of
 `token_type` (`input`, `output`, `cache_read`, `cache_write`, `reasoning`)
-**particionan** los tokens de un evento: cada token se cuenta en exactamente
-una clase. El invariante existe porque `pricing.CostUSD` suma por clase de
-forma independiente, así que un token contado dos veces se cobra dos veces, a
-dos tarifas distintas.
+**partitions** the tokens of an event: each token is counted in exactly
+a class The invariant exists because `pricing.CostUSD` sums per class of
+independently, so a token counted twice is cashed twice,
+two different rates.
 
-Lo que el contrato no decía es que **cada provider usa una convención de
-anidamiento distinta en origen**, y que dos de las tres son incompatibles
-entre sí. Esto no se detectó durante JCB-310/311/312 porque cada provider se
-validó contra fixtures sintéticos escritos por el mismo autor que el parser:
-el fixture codificaba la misma suposición que el código, y el test pasaba.
+What the contract did not say is that **each provider uses a convention of
+nesting different in origin**, and that two of the three are incompatible
+each other. This was not detected during JCB-310/311/312 because each provider is
+validated against synthetic fixtures written by the same author as the parser:
+the fixture encoded the same assumption as the code, and the test passed.
 
-Los dos providers que no son Claude Code resultaron no emitir ningún evento
-sobre datos reales (JCB-311, JCB-312), y al verificar el esquema real
-aparecieron las convenciones de abajo.
+The two non-Claude Code providers turned out to not emit any events
+on real data (JCB-311, JCB-312), and when checking the real scheme
+the conventions below appeared.
 
-## Decisión
+## Decision
 
-**La normalización a clases disjuntas es responsabilidad del provider, no del
-agregador ni del collector.** Cada `Parse` emite `model.UsageEvent.Tokens` ya
-particionado; nada aguas abajo re-interpreta, resta ni deduce.
+**Normalization to disjoint classes is the responsibility of the provider, not the
+aggregator or collector.** Each `Parse` emits `model.UsageEvent.Tokens` already
+partitioned; nothing downstream re-interprets, subtracts or deduces.
 
-Convenciones verificadas en origen, con la evidencia que las sostiene:
+Conventions verified at origin, with the evidence that supports them:
 
-| Provider | `cache` vs `input` | `reasoning` vs `output` | Fuente del contador |
+| Provider | `cache` vs `input` | `reasoning` vs `output` | Counter font |
 | --- | --- | --- | --- |
-| Claude Code | disjunto en origen | n/a | campos nativos de la API en JSONL |
-| Codex | **anidado**: `cached_input_tokens` ⊂ `input_tokens` | **anidado**: `reasoning_output_tokens` ⊂ `output_tokens` | `event_msg`/`token_count`, acumulado por sesión |
-| OpenCode | disjunto en origen | **depende del modelo**: disjunto en 8893/10015 registros, anidado (`reasoning` ⊂ `output`) en 1122/10015, todos ellos `opencode-go`/`kimi-k2.5` | `message.data`, delta por mensaje |
+| Claude Code | disjoint in origin | n/a | native API fields in JSONL |
+| Codex | **nested**: `cached_input_tokens` ⊂ `input_tokens` | **nested**: `reasoning_output_tokens` ⊂ `output_tokens` | `event_msg`/`token_count`, accumulated per session |
+| OpenCode | disjoint in origin | **depends on model**: disjoint in 8893/10015 records, nested (`reasoning` ⊂ `output`) in 1122/10015, all of them `opencode-go`/`kimi-k2.5` | `message.data`, delta per message |
 
-Evidencia Codex, sobre 1919 registros `token_count` de 191 rollouts reales,
-sin contraejemplos: `total_tokens == input_tokens + output_tokens` en 1919/1919
-con `cached_input_tokens > 0`, y `cached_input_tokens > input_tokens` en 0
-casos; `total_tokens == input_tokens + output_tokens` en 1913/1913 de los
-registros con `reasoning_output_tokens > 0`.
+Codex evidence, about 1919 `token_count` records of 191 real rollouts,
+no counterexamples: `total_tokens == input_tokens + output_tokens` in 1919/1919
+with `cached_input_tokens > 0`, and `cached_input_tokens > input_tokens` set to 0
+cases; `total_tokens == input_tokens + output_tokens` in 1913/1913
+records with `reasoning_output_tokens > 0`.
 
-Reverificado de forma independiente el 2026-10-07 sobre los **275** rollouts
-reales disponibles (1934 registros `token_count`, 57.828.243 tokens): la suma
-de las cuatro clases que emite el parser iguala exactamente un
-`Δtotal_tokens` recomputado aparte desde el JSON crudo, con **0**
-discrepancias, 0 eventos con modelo desconocido y 0 sesiones sin id.
+Independently verified on 2026-10-07 on **275** rollouts
+actual available (1934 `token_count` records, 57,828,243 tokens): the sum
+of the four classes that the parser emits exactly equals one
+`Δtotal_tokens` recomputed separately from raw JSON, with **0**
+discrepancies, 0 events with unknown model and 0 sessions without id.
 
-Evidencia OpenCode, sobre los 18.423 mensajes de asistente de una base real,
-con la aritmética explicada al 100 % y sin un solo caso sin clasificar:
+OpenCode evidence, on 18,423 assistant messages from a real database,
+with the arithmetic 100% explained and without a single unclassified case:
 
 ```
 assistant_all                                      18423
@@ -64,19 +64,19 @@ assistant_all                                      18423
   sin explicar                                         0
 ```
 
-Los 1122 registros anidados son **un solo par** provider/modelo,
-`opencode-go`/`kimi-k2.5`, y para ese par el anidamiento es determinista:
-1122/1122 de sus registros con `reasoning > 0` y `total` presente son
-anidados, 0 aditivos. Los otros tres providers de la base (`openai`,
-`opencode`, `omlx`) son aditivos en 7865/7865 de sus registros con
+The 1122 nested records are **a single** provider/model pair,
+`opencode-go`/`kimi-k2.5`, and for that pair the nesting is deterministic:
+1122/1122 of your records with `reasoning > 0` and `total` present are
+nested, 0 additives. The other three base providers (`openai`,
+`opencode`, `omlx`) are additive in 7865/7865 of your registers with
 `reasoning > 0`.
 
-De los 673 registros sin `tokens.total`, 533 son `opencode`/`grok-code` con
-`reasoning > 0` — un provider aditivo en todos sus registros medibles — y los
-140 restantes tienen `reasoning == 0`, donde la convención es indiferente. El
-default aditivo cuando falta `total` es por tanto correcto en los 673.
+Of the 673 records without `tokens.total`, 533 are `opencode`/`grok-code` with
+`reasoning > 0` — an additive provider on all its measurable records — and the
+The remaining 140 have `reasoning == 0`, where the convention is indifferent. He
+Additive default when `total` is missing is therefore correct in 673.
 
-Por tanto Codex **resta** y OpenCode **no**:
+Therefore Codex **subtracts** and OpenCode **does not**:
 
 ```
 # Codex: deshace los dos anidamientos sobre los deltas del acumulado
@@ -95,78 +95,78 @@ reasoning   = reasoning
 output      = nested ? max(0, output - reasoning) : output
 ```
 
-### Los 6 registros aritmeticamente contradictorios
+### The 6 arithmetically contradictory records
 
-Verificado de forma independiente el 2026-10-07 sobre la misma base real
-(18.423 mensajes de asistente): de los 1122 registros anidados, **6 declaran
-`reasoning > output`** — por ejemplo `output=85, reasoning=88, total=94158`
-con `total == i+o+cr+cw`. Esos seis son auto-contradictorios en origen:
-`reasoning` no puede estar contenido en un `output` menor que el, y a la vez
-`total` no lo incluye. OpenCode no deriva ambos contadores de la misma
-fuente, y ninguna de las dos ramas de la formula reconcilia el registro:
+Independently verified on 2026-10-07 on the same real basis
+(18,423 wizard messages): Of the 1,122 nested records, **6 declare
+`reasoning > output`** — for example `output=85, reasoning=88, total=94158`
+with `total == i+o+cr+cw`. Those six are self-contradictory in origin:
+`reasoning` cannot be contained in an `output` smaller than it, and at the same time
+`total` does not include it. OpenCode does not derive both counters from the same
+source, and neither of the two branches of the formula reconcile the record:
 
-| Rama | `output` emitido | Suma de las 5 clases | Error frente a `total` |
+| Branch | `output` emitted | Sum of the 5 classes | Error vs `total` |
 | --- | --- | --- | --- |
-| Anidado con `max(0, ...)` | 0 | `total + (reasoning - output)` | +1 a +42 tokens (63 en total) |
-| Aditivo (sin restar) | `output` | `total + reasoning` | +85 a +625 tokens (1719 en total) |
+| Nested with `max(0, ...)` | 0 | `total + (reasoning - output)` | +1 to +42 tokens (63 total) |
+| Additive (without subtracting) | `output` | `total + reasoning` | +85 to +625 tokens (1719 total) |
 
-Se mantiene la rama anidada con el `max(0, ...)`: es la cota de error mas
-baja de las dos (63 tokens sobre 1.354.709.078 emitidos, 4,7e-8), y no
-introduce un caso especial que un modelo nuevo tendria que volver a
-descubrir. La consecuencia es que **el invariante por registro admite esta
-excepcion documentada y acotada**: un registro anidado con
-`reasoning > output` suma `total + (reasoning - output)`, no `total`. Un test
-de invariante que la ignore falla sobre datos reales; uno que la trate como
-aprobada sin mas pierde la senal si el caso crece. La forma correcta de
-fijarla es un fixture explicito con esa aritmetica (JCB-323).
+The nested branch is maintained with the `max(0, ...)`: it is the highest error level
+low of the two (63 tokens out of 1,354,709,078 issued, 4.7e-8), and not
+introduces a special case that a new model would have to remake
+discover. The consequence is that **the log invariant admits this
+documented and bounded exception**: a nested record with
+`reasoning > output` sums `total + (reasoning - output)`, not `total`. A test
+of an invariant that ignores it fails on real data; one who treats her like
+approved without further ado loses the signal if the case grows. The correct way to
+fixing it is an explicit fixture with that arithmetic (JCB-323).
 
-La regla de OpenCode se deriva del registro, no de una lista de modelos
-mantenida a mano: si `total` ya cuadra sin `reasoning`, entonces `reasoning`
-viaja dentro de `output` y hay que restarlo. Un modelo nuevo con la convencion
-anidada queda cubierto sin tocar codigo. Cuando `total` falta no hay senal, y
-el default es aditivo (no restar), que es la convencion de 7865/7865 registros
-de los providers aditivos.
+OpenCode rule is derived from the registry, not a list of models
+handheld: if `total` already fits without `reasoning`, then `reasoning`
+it travels inside `output` and must be subtracted. A new model with the convention
+nested is covered without touching code. When `total` is missing there is no signal, and
+the default is additive (not subtracting), which is the 7865/7865 register convention
+of additive providers.
 
-Codex no expone `cache_write`; se omite en lugar de emitirse como 0, para que
-la ausencia del dato se distinga de un valor medido de cero.
+Codex does not expose `cache_write`; is ignored instead of being output as 0, so that
+the absence of the data is distinguished from a measured value of zero.
 
-## Alternativas consideradas
+## Alternatives considered
 
-- **Normalizar en el agregador, con una bandera de convención por provider.**
-  Centraliza la resta en un sitio, pero mueve conocimiento específico del
-  formato fuera del único paquete que ya lo tiene, y obliga a que
-  `UsageEvent` transporte un estado intermedio no disjunto que viola el
-  invariante del contrato mientras viaja. Descartada.
-- **Añadir una clase `input_total` que incluya el cacheado.** Haría las sumas
-  por provider más fáciles de comparar con las UIs nativas, pero rompe
-  explícitamente la partición, que es la propiedad de la que depende el coste.
-  Descartada.
-- **Mantener el estado actual.** No es una opción: hoy el número principal
-  del exporter sería incorrecto para dos de los tres providers del MVP.
+- **Normalize in the aggregator, with a convention flag per provider.**
+It centralizes the subtraction in one place, but moves specific knowledge of the
+format outside the only package that already has it, and forces
+`UsageEvent` carries a non-disjoint intermediate state that violates the
+invariant of the contract while traveling. Discarded.
+- **Add a class `input_total` that includes caching.** It would do the sums
+by provider easier to compare with native UIs, but breaks
+explicitly the partition, which is the property on which the cost depends.
+Discarded.
+- **Maintain current status.** Not an option: today the main number
+of the exporter would be incorrect for two of the three MVP providers.
 
-## Consecuencias
+## Consequences
 
-- Cada provider carga con un test de invariante obligatorio: la suma de las
-  cinco clases emitidas debe igualar el total declarado por la herramienta
-  para esa sesión. Es el único test que detecta el doble conteo, y es el que
-  faltaba en JCB-311 y JCB-312. **En OpenCode el invariante se evalúa por
-  registro, no agregado**: el total declarado solo es reconciliable sabiendo
-  si ese registro es anidado o aditivo, y 673 registros no declaran `total`
-  en absoluto. Un test que sume todo y lo compare con la suma de `total`
-  falla sobre datos reales por 6,3 % de los registros, y "arreglarlo" con una
-  resta uniforme reintroduce el doble conteo en los otros 93,7 %.  El
-  invariante por registro tiene una unica excepcion documentada y acotada:
-  los 6 registros con `reasoning > output` descritos arriba.
-- Los fixtures de provider deben ser **extractos redactados de datos reales**,
-  no sintéticos. Un fixture escrito desde la misma suposición que el parser no
-  prueba nada; esa es la causa raíz de los dos defectos. Redactar significa
-  sustituir `cwd`, instrucciones, argumentos de herramienta y contenido de
-  mensajes por `REDACTED`, conservando solo timestamps, ids, modelo y
-  contadores.
-- Un provider nuevo no puede darse por terminado con tests verdes: hace falta
-  una pasada sobre datos reales que demuestre `events > 0`. El subcomando
-  `doctor` (JCB-315) expone eventos emitidos y tokens sumados por provider
-  justamente para que "encontré ficheros y emití 0 eventos" sea visible en
-  lugar de ser un cero silencioso.
-- `docs/metrics.md` no cambia: el invariante de disjunción era correcto. Lo
-  que faltaba era este mapeo por provider.
+- Each provider carries a mandatory invariant test: the sum of the
+five classes issued must equal the total declared by the tool
+for that session. It is the only test that detects double counting, and it is the one that
+was missing on JCB-311 and JCB-312. **In OpenCode the invariant is evaluated by
+record, not aggregate**: the declared total is only reconcilable knowing
+whether that record is nested or additive, and 673 records do not declare `total`
+at all. A test that adds everything and compares it with the sum of `total`
+fails on real data for 6.3% of the records, and "fix" it with a
+Uniform subtraction reintroduces double counting in the other 93.7%.  He
+register invariant has a single documented and bounded exception:
+the 6 registers with `reasoning > output` described above.
+- Provider fixtures must be **written extracts from real data**,
+not synthetic. A fixture written from the same assumption as the parser does not
+prove nothing; that is the root cause of the two defects. Writing means
+replace `cwd`, ​​instructions, tool arguments and contents of
+messages by `REDACTED`, keeping only timestamps, ids, model and
+accountants.
+- A new provider cannot be terminated with green tests: it is necessary
+a pass on real data that shows `events > 0`. The subcommand
+`doctor` (JCB-315) exposes events emitted and tokens summed by provider
+precisely so that "I found files and issued 0 events" is visible in
+instead of being a silent zero.
+- `docs/metrics.md` does not change: the disjunction invariant was correct. It
+What was missing was this mapping by provider.

@@ -1,20 +1,20 @@
-# ADR-005: El presupuesto de escaneo por bytes no aplica a fuentes SQLite
+#ADR-005: Byte scan budget does not apply to SQLite sources
 
-- Fecha: 2026-10-07
-- Estado: Aceptado
-- Revisión: si aparece un formato consultable (no JSONL) donde el tamaño del
-  fichero sí prediga el coste de la consulta
+- Date: 2026-10-07
+- Status: Accepted
+- Fix: if a queryable format (non-JSONL) appears where the size of the
+file does predict the cost of the query
 
-## Contexto
+## Context
 
-`internal/provider/discover.go` aplica dos topes por bytes a todo candidato
-que encuentra, sin distinguir `SourceKind`: `MaxBytesFile` (256 MiB por
-fichero) descarta cualquier candidato que lo supere, y `MaxTotalBytes`
-(4 GiB) deja de admitir candidatos una vez que la suma acumulada de tamaños
-los supera.
+`internal/provider/discover.go` applies two byte caps to every candidate
+which finds, without distinguishing `SourceKind`: `MaxBytesFile` (256 MiB per
+file) discards any candidate that exceeds it, and `MaxTotalBytes`
+(4 GiB) stops supporting candidates once the cumulative sum of sizes
+surpasses them.
 
-Medido el 2026-10-07 sobre `main` en `f737887` (con JCB-321 y JCB-322 ya
-fusionados) contra los datos reales de `Daniels-MBP.lan`:
+Measured on 2026-10-07 on `main` at `f737887` (with JCB-321 and JCB-322 already
+merged) against the actual data of `Daniels-MBP.lan`:
 
 ```
 claude-code  files=30   skipped=0   events=2507    tokens=309451691   parse_errors=0
@@ -22,49 +22,49 @@ codex        files=275  skipped=0   events=1934    tokens=57828243    parse_erro
 opencode     files=1    skipped=1   events=0       tokens=0           parse_errors=0
 ```
 
-El provider de OpenCode no tiene ningún bug de parseo — JCB-322 ya corrigió
-su consulta — pero nunca llega a ejecutarse: `opencode.db` pesa 2.75 GB en
-esa máquina, 10.2x por encima de `MaxBytesFile`, y `Discover` lo descarta
-antes de que `Parse` lo vea. `skipped=1` con `events=0` es la firma exacta
-de este fallo.
+The OpenCode provider does not have any parsing bug — JCB-322 already corrected
+your query — but it never gets executed: `opencode.db` weighs 2.75 GB in
+that machine, 10.2x above `MaxBytesFile`, and `Discover` discards it
+before `Parse` sees it. `skipped=1` with `events=0` is the exact signature
+of this ruling.
 
-## Por qué el tope por bytes es el control equivocado para SQLite
+## Why byte cap is the wrong control for SQLite
 
-`MaxBytesFile` existe para acotar cuánto tiene que leer un `Provider.Parse`
-*en streaming* antes de emitir el primer evento — ver el comentario de
-`Budget` en `discover.go`: sin él, un JSONL de 2 GB convierte servir el
-primer `/metrics` en una espera de varios minutos. Para un formato que se
-lee secuencialmente de principio a fin, el tamaño del fichero **es**
-literalmente el trabajo que `Parse` va a hacer, así que es el control
-correcto.
+`MaxBytesFile` exists to limit how much a `Provider.Parse` has to read
+*in streaming* before broadcasting the first event — see comment by
+`Budget` in `discover.go`: without it, a 2 GB JSONL converts serving the
+first `/metrics` in a wait of several minutes. For a format that
+reads sequentially from start to finish, file size **is**
+literally the work that `Parse` is going to do, so it's the control
+correct.
 
-Una fuente `SourceSQLite` no se lee así. `opencode.Parse` abre el fichero
-con `modernc.org/sqlite` en modo `mode=ro` y ejecuta una consulta indexada
-(`SELECT ... FROM message JOIN session ... ORDER BY m.id`); el driver pagina
-el fichero bajo demanda a través del motor B-tree de SQLite, nunca carga el
-`.db` completo en memoria. El tamaño en disco de un `opencode.db` no predice
-ni cuánta memoria usa esa consulta ni cuánto tarda — lo que importa es
-cuántas filas de rol `assistant` contiene y qué tan fragmentado está el
-índice, ninguno de los dos derivable de `info.Size()`.
+A `SourceSQLite` source is not read like this. `opencode.Parse` opens the file
+with `modernc.org/sqlite` in `mode=ro` mode and run an indexed query
+(`SELECT ... FROM message JOIN session ... ORDER BY m.id`); the driver page
+the file on demand through the SQLite B-tree engine, it never loads the
+Full `.db` in memory. The disk size of an `opencode.db` does not predict
+nor how much memory that query uses nor how long it takes — what matters is
+how many rows of `assistant` role does it contain and how fragmented is the
+index, neither derivable from `info.Size()`.
 
-Contar esos bytes además producía un segundo efecto equivocado:
-`MaxTotalBytes` (4 GiB) se consumía al ~69 % con este único fichero,
-dejando sin presupuesto a los *demás* providers del mismo escaneo — aunque
-hoy cada llamada a `Discover` parte de un `totalBytes` propio por invocación
-y `scan.Run` llama a `Discover` una vez por provider, de forma que este
-segundo efecto no se manifiesta todavía de forma cruzada entre providers.
-Sigue siendo la dimensión equivocada para medir el coste de una fuente que
-no se va a leer completa, y una futura implementación que comparta
-presupuesto entre providers en el mismo escaneo heredaría el problema si no
-se corrige aquí primero.
+Counting those bytes also produced a second wrong effect:
+`MaxTotalBytes` (4 GiB) was consumed at ~69% with this single file,
+leaving the *other* providers of the same scan without a budget — although
+Today each call to `Discover` starts from its own `totalBytes` per invocation
+and `scan.Run` calls `Discover` once per provider, so this
+The second effect is not yet manifested across providers.
+It is still the wrong dimension to measure the cost of a source that
+will not be read in full, and a future implementation that shares
+budget between providers in the same scan would inherit the problem if not
+It is corrected here first.
 
-## Decisión
+## Decision
 
-**Las fuentes `SourceSQLite` quedan exentas de los dos topes por bytes**
-(`MaxBytesFile` y la contabilidad de `MaxTotalBytes`) en
-`internal/provider/discover.go`. `Deadline` y `MaxFiles` siguen aplicando
-sin excepción — son la guarda real para esta fuente, no el tamaño del
-fichero.
+**`SourceSQLite` sources are exempt from the two byte caps**
+(`MaxBytesFile` and accounting for `MaxTotalBytes`) in
+`internal/provider/discover.go`. `Deadline` and `MaxFiles` still apply
+without exception — are the actual guard for this font, not the size of the
+file.
 
 ```go
 if d.Kind != SourceSQLite && info.Size() > b.MaxBytesFile {
@@ -74,55 +74,55 @@ if d.Kind != SourceSQLite && info.Size() > b.MaxBytesFile {
 countsTowardTotal := c.Kind != SourceSQLite
 ```
 
-Los formatos que sí se leen en streaming (`SourceJSONL`, `SourceJSON`) no
-cambian: siguen acotados por ambos topes exactamente como antes.
+Formats that are read in streaming (`SourceJSONL`, `SourceJSON`) are not
+they change: they remain bounded by both stops exactly as before.
 
-## Alternativas consideradas
+## Alternatives considered
 
-1. **Exentar `SourceSQLite` de los topes por bytes (elegida).** Mínima,
-   dirigida, restaura el provider sobre datos reales, y deja el control en
-   la dimensión que sí corresponde a esta fuente (tiempo, vía `Deadline`).
-   Desventaja: una base de datos patológica (índices corruptos, un disco de
-   red muy lento) podría hacer lenta la consulta; lo acota el `Deadline`
-   del presupuesto y el `busy_timeout(2000)` que ya lleva el DSN de
-   `opencode.DSN`.
-2. **Un tope propio y mucho mayor para SQLite** (p. ej. `MaxBytesSQLite`,
-   16 GiB). Conserva una guarda explícita por tamaño, pero es un número
-   arbitrario que una base de datos futura puede volver a superar, y sigue
-   midiendo una dimensión que no es el coste real de una fuente consultada
-   por índice. Descartada.
-3. **Presupuesto por `SourceKind`** (un `map[SourceKind]int64` de topes).
-   La más general — cubriría un futuro formato con su propio perfil de
-   coste sin tocar `Discover` otra vez — pero es superficie de
-   configuración nueva para la única necesidad real de hoy (un kind exento,
-   no varios topes distintos). Prematura. Se reconsidera si aparece un
-   segundo formato con un perfil de coste propio.
-4. **Dejarlo como está.** Descartada: publica un MVP donde uno de los tres
-   providers del alcance queda permanentemente mudo sobre datos reales,
-   algo que ya falló dos veces antes (JCB-321, JCB-322) por la misma causa
-   raíz — "CI verde, cero eventos sobre datos reales" — un nivel más abajo,
-   en el presupuesto de escaneo en vez de en el parser.
+1. **Exempt `SourceSQLite` from byte caps (chosen).** Minimal,
+directed, restores the provider on real data, and leaves control in
+the dimension that does correspond to this source (time, via `Deadline`).
+Disadvantage: a pathological database (corrupt indexes, a disk of
+very slow network) could make the query slow; it is limited by the `Deadline`
+of the budget and the `busy_timeout(2000)` that the DSN already has
+`opencode.DSN`.
+2. **A much larger limit for SQLite** (e.g. `MaxBytesSQLite`,
+16 GiB). Keeps an explicit guard for size, but it is a number
+arbitrary that a future database can again exceed, and continues
+measuring a dimension that is not the real cost of a source consulted
+by index. Discarded.
+3. **Budget by `SourceKind`** (a `map[SourceKind]int64` of caps).
+The most general — it would cover a future format with its own profile of
+cost without touching `Discover` again — but it's surface
+new configuration for today's only real need (an exempt kind,
+not several different stops). Early. It is reconsidered if a
+second format with its own cost profile.
+4. **Leave it as is.** Discarded: Publish an MVP where one of the three
+providers scope is permanently mute about actual data,
+something that already failed twice before (JCB-321, JCB-322) for the same reason
+root — “Green IC, zero events on real data” — one level down,
+in the scan budget instead of in the parser.
 
-## Consecuencias
+## Consequences
 
-- `Discover` ahora puede devolver una fuente `SourceSQLite` de cualquier
-  tamaño; `Provider.Parse` sigue siendo responsable de acotar su propio
-  trabajo (en OpenCode, vía `busy_timeout(2000)` en el DSN y respetando
-  `ctx` en el bucle de filas).
-- `MaxTotalBytes` deja de reflejar "bytes totales de todo lo encontrado" y
-  pasa a significar "bytes totales de fuentes que se leen en streaming";
-  una fuente SQLite nunca contribuye a ese acumulado ni lo consume.
-- Un futuro cambio que comparta `Budget`/`MaxTotalBytes` entre providers
-  dentro de un mismo `scan.Run` (hoy cada llamada a `Discover` parte de un
-  contador propio) hereda esta exención automáticamente, sin tener que
-  redescubrir el problema de JCB-324.
-- Esta decisión no reabre ni modifica ADR-001: sigue sin haber estado
-  agregado persistido entre arranques; esto es exclusivamente sobre qué
-  cuenta como "bytes a presupuestar" dentro de un único escaneo.
+- `Discover` can now return a `SourceSQLite` source from any
+size; `Provider.Parse` is still responsible for parsing its own
+work (in OpenCode, via `busy_timeout(2000)` in the DSN and respecting
+`ctx` in the row loop).
+- `MaxTotalBytes` stops reflecting "total bytes of everything found" and
+now means "total bytes of sources read in streaming";
+an SQLite source never contributes to or consumes that accumulation.
+- A future change that shares `Budget`/`MaxTotalBytes` between providers
+within the same `scan.Run` (today each call to `Discover` starts from a
+own accountant) inherits this exemption automatically, without having to
+rediscover the problem of JCB-324.
+- This decision does not reopen or modify ADR-001: it still has not been
+aggregate persisted between boots; this is exclusively about what
+counts as "bytes to budget" within a single scan.
 
-## Condición de reapertura
+## Reopening condition
 
-Reabrir esta decisión si aparece un formato consultable (no streameado)
-donde el tamaño del fichero en disco sí prediga de forma fiable el coste de
-leerlo — en ese caso, pasar a la alternativa 3 (presupuesto por
-`SourceKind`) en vez de añadir una exención ad-hoc más.
+Reopen this decision if a searchable format appears (not streamed)
+where the size of the file on disk does reliably predict the cost of
+read it — in that case, go to alternative 3 (budget by
+`SourceKind`) instead of adding one more ad-hoc exemption.

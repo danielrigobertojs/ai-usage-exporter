@@ -1,106 +1,106 @@
-# ADR-003: Licenciamiento Apache-2.0 y kit de atribución
+#ADR-003: Apache-2.0 Licensing and Attribution Kit
 
-- Fecha: 2026-10-05
-- Estado: Aceptado
-- Revisión: reconsiderar si el solicitante decide licenciamiento dual u
-  open core (ver "Condición de reapertura")
+- Date: 2026-10-05
+- Status: Accepted
+- Review: reconsider if the applicant decides on dual licensing or
+open core (see "Reopening condition")
 
-## Contexto
+## Context
 
-El solicitante pidió open source con **reconocimiento permanente del
-repositorio y del autor**. El bootstrap original (JCB-307) dejó un `LICENSE`
-de Apache-2.0 ya en el repositorio, pero no el resto del kit de atribución
-que la licencia por sí sola no garantiza.
+The applicant requested open source with **permanent recognition of the
+repository and author**. The original bootstrap (JCB-307) left a `LICENSE`
+of Apache-2.0 already in the repository, but not the rest of the attribution kit
+which the license alone does not guarantee.
 
-MIT, la alternativa obvia más permisiva, no cumple el requisito: obliga a
-conservar el aviso de copyright en copias y porciones sustanciales, pero no
-tiene mecanismo de propagación de avisos a forks, no obliga a declarar
-modificaciones, no dice nada de marcas, y permite que un fork rebrandee el
-proyecto, entierre el `LICENSE` y cumpla legalmente mientras la atribución
-queda invisible para cualquier usuario final.
+MIT, the most permissive obvious alternative, does not meet the requirement: it forces
+retain the copyright notice in copies and substantial portions, but not
+It has a mechanism for propagating notices to forks, it does not require declaration
+modifications, does not say anything about brands, and allows a fork to rebrand the
+project, bury the `LICENSE` and comply legally while the attribution
+remains invisible to any end user.
 
-## Decisión
+## Decision
 
-**Apache License 2.0** como licencia del proyecto. Las cláusulas que
-resuelven el requisito:
+**Apache License 2.0** as the project license. The clauses that
+solve the requirement:
 
-- **§4(b)** — los trabajos derivados deben llevar avisos prominentes de que
-  se modificó el archivo.
-- **§4(c)** — deben conservar los avisos de copyright, patente, marca y
-  atribución del original.
-- **§4(d)** — el archivo `NOTICE` de este repositorio se propaga: cualquier
-  derivado distribuido debe incluir una copia legible de sus avisos, en su
-  propio `NOTICE`, en la distribución de fuentes, **o en la salida que el
-  derivado genera**. Esta última vía es la que usamos: `version.String()`
-  incluye `internal/license.Attribution()`, así que el crédito viaja con el
-  binario en ejecución, no solo con el código fuente.
-- **§6** — no concede derechos de marca; el nombre del proyecto sigue siendo
-  del autor. Documentado en `TRADEMARK.md`.
-- Concesión expresa de patentes (§3), con terminación si alguien litiga por
-  patentes contra el proyecto.
+- **§4(b)** — derivative works must bear prominent notices that
+the file was modified.
+- **§4(c)** — must retain copyright, patent, trademark and
+attribution of the original.
+- **§4(d)** — this repository's `NOTICE` file is propagated: any
+distributed derivative must include a legible copy of its notices, in its
+own `NOTICE`, in the source distribution, **or in the output that the
+generated derivative**. This last way is the one we use: `version.String()`
+includes `internal/license.Attribution()`, so credit travels with the
+running binary, not just the source code.
+- **§6** — does not grant trademark rights; the project name is still
+of the author. Documented in `TRADEMARK.md`.
+- Express grant of patents (§3), with termination if someone litigates for
+patents against the project.
 
-Titular del copyright: persona física **Daniel Rigoberto Jacobo Sandoval**
-(decidido por el solicitante el 2026-10-02). Aplicado en `NOTICE`,
-`internal/license`, las cabeceras SPDX de cada `.go`, y `CITATION.cff`.
+Copyright holder: natural person **Daniel Rigoberto Jacobo Sandoval**
+(decided by the applicant on 2026-10-02). Applied in `NOTICE`,
+`internal/license`, the SPDX headers of each `.go`, and `CITATION.cff`.
 
-Mecanismo de contribución: **DCO** (`Signed-off-by:` por commit, verificado
-en CI), no CLA. Ver "Alternativas descartadas".
+Contribution mechanism: **DCO** (`Signed-off-by:` by commit, verified
+in CI), not CLA. See "Discarded alternatives".
 
-## Límite honesto
+## Honest limit
 
-Apache-2.0 no obliga a un crédito visible en la interfaz de un producto
-cerrado que incorpore este código como dependencia interna sin
-redistribuirlo — §4 solo aplica a quien *distribuye* el Work o Derivative
-Works. Ninguna licencia aprobada por la OSI logra eso de forma fiable. Las
-que lo intentan (la cláusula publicitaria de BSD-4-clause, las licencias
-"attribution assurance") son incompatibles con GPL, generan proliferación
-de licencias y espantan la adopción. No se consideran.
+Apache-2.0 does not force a visible credit on a product interface
+closed that incorporates this code as an internal dependency without
+redistribute it — §4 only applies to whoever *distributes* the Work or Derivative
+Works. No OSI-approved license reliably accomplishes that. The
+that try (the BSD-4-clause publicity clause, the licenses
+"attribution assurance") are incompatible with GPL, generate proliferation
+of licenses and scare away adoption. They are not considered.
 
-Lo que sí logramos, y es lo que estaba al alcance de este ticket: la
-atribución viaja con cada **distribución** del binario o del código
-(`NOTICE`, cabeceras SPDX, `version.String()`, el `User-Agent` HTTP, y la
-métrica `ai_usage_build_info` cuando exista el collector).
+What we did achieve, and that is what was within the reach of this ticket: the
+attribution travels with each **distribution** of the binary or code
+(`NOTICE`, SPDX headers, `version.String()`, the HTTP `User-Agent`, and the
+`ai_usage_build_info` metric when the collector exists).
 
-## Alternativas descartadas
+## Discarded alternatives
 
-**MIT.** Ver "Contexto" — no cumple el requisito de atribución persistente.
+**MIT.** See "Context" — does not meet the persistent attribution requirement.
 
-**Licencias con cláusula publicitaria o "attribution assurance" (ej.
-BSD-4-clause).** Sí fuerzan un crédito más visible, pero son incompatibles
-con GPL (proliferación de licencias, GPL es copyleft pero este proyecto no
-lo es, así que no afecta directamente, pero sí afecta a cualquier
-consumidor downstream que combine esta dependencia con software GPL) y la
-FSF y Debian las señalan como problemáticas. Riesgo de adopción más alto que
-el beneficio marginal de atribución que dan sobre Apache-2.0 §4(d).
+**Licenses with advertising clause or "attribution assurance" (e.g.
+BSD-4-clause).** They do force a more visible credit, but they are incompatible
+with GPL (proliferation of licenses, GPL is copyleft but this project is not
+it is, so it doesn't affect directly, but it does affect any
+downstream consumer that combines this dependency with GPL software) and the
+FSF and Debian point them out as problematic. Adoption risk higher than
+the marginal attribution benefit they give over Apache-2.0 §4(d).
 
-**CLA en lugar de DCO.** Un CLA típicamente licencia o asigna el copyright
-de la contribución al mantenedor más allá de lo que Apache-2.0 ya concede
-en su §5, y es el mecanismo que habilitaría licenciamiento dual u open
-core. Este proyecto no persigue ninguno de los dos (ver "Fuera de alcance"
-del ticket que originó este ADR), así que el DCO — una atestación más
-ligera, sin cesión adicional — es suficiente y reduce la fricción para
-contribuir.
+**CLA instead of DCO.** A CLA typically licenses or assigns copyright
+of contribution to the maintainer beyond what Apache-2.0 already grants
+in its §5, and is the mechanism that would enable dual or open licensing
+core. This project does not pursue either of the two (see "Out of reach"
+of the ticket that originated this ADR), so the DCO — one more attestation
+light, with no additional give — is sufficient and reduces friction to
+contribute.
 
-## Consecuencias
+## Consequences
 
-- `scripts/check-spdx.sh` en CI falla el build si algún `.go` pierde su
-  cabecera SPDX/copyright — el mecanismo que sobrevive al copy-paste de un
-  archivo suelto fuera de su historial de git.
-- `scripts/gen-third-party.sh` en CI falla el build si una dependencia
-  nueva es copyleft (GPL, AGPL, LGPL, MPL) o no tiene licencia detectable,
-  y si `THIRD_PARTY_LICENSES.md` committeado queda desactualizado frente a
-  `go.mod`.
-- Cambiar los nombres de métrica ya expuestas sigue requiriendo discusión
-  en el issue correspondiente — eso no lo cambia este ADR, pero
-  `ai_usage_build_info` gana los labels `project` y `license` sin dejar de
-  ser una sola serie.
-- Si en el futuro se quiere licenciamiento dual u open core, este ADR debe
-  reabrirse: implica sustituir DCO por CLA y es una decisión de negocio, no
-  de ingeniería — explícitamente fuera de alcance aquí.
+- `scripts/check-spdx.sh` in CI build fails if any `.go` loses its
+SPDX/copyright header — the mechanism that survives copy-paste of a
+loose file out of your git history.
+- `scripts/gen-third-party.sh` in CI build fails if a dependency
+new is copyleft (GPL, AGPL, LGPL, MPL) or has no detectable license,
+and if `THIRD_PARTY_LICENSES.md` committed becomes outdated vs.
+`go.mod`.
+- Changing already exposed metric names still requires discussion
+in the corresponding issue — this ADR does not change that, but
+`ai_usage_build_info` gains the `project` and `license` labels while still
+be a single series.
+- If dual or open core licensing is desired in the future, this ADR must
+reopen: it implies replacing DCO with CLA and is a business decision, not
+engineering — explicitly out of scope here.
 
-## Condición de reapertura
+## Reopening condition
 
-Reabrir si el solicitante decide perseguir licenciamiento dual u open core
-(requeriría CLA en lugar de DCO), o si se decide registrar la marca ante una
-oficina (IMPI u otra) — ambos son trámites de negocio/legales fuera del
-alcance de este ticket.
+Reopen if the applicant decides to pursue dual or open core licensing
+(it would require CLA instead of DCO), or if it is decided to register the trademark before a
+office (IMPI or other) — both are business/legal procedures outside the
+scope of this ticket.
