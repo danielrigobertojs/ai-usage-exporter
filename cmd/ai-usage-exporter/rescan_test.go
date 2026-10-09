@@ -4,8 +4,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -25,6 +28,17 @@ type countingProvider struct {
 	count   *int32
 	block   <-chan struct{}
 	started chan<- struct{}
+}
+
+type timeoutProvider struct{}
+
+func (timeoutProvider) Descriptor() provider.Descriptor {
+	return provider.Descriptor{ID: "timeout", Kind: provider.SourceJSONL, Roots: []provider.RootSpec{{Base: provider.BaseHome, Rel: ".counter", Glob: "*.jsonl"}}}
+}
+
+func (timeoutProvider) Parse(ctx context.Context, _ provider.Source, _ func(model.UsageEvent) error) error {
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func (p countingProvider) Descriptor() provider.Descriptor {
@@ -200,5 +214,28 @@ func TestRunRescanLoopPublishesNewResult(t *testing.T) {
 
 	if !c.Ready() {
 		t.Fatal("collector is not ready after a triggered scan completed")
+	}
+}
+
+func TestRunRescanLoopLogsFailedRescan(t *testing.T) {
+	reg := provider.NewRegistry()
+	if err := reg.Register(timeoutProvider{}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	trigger := make(chan struct{}, 1)
+	completed := make(chan struct{}, 1)
+	var logs bytes.Buffer
+	old := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(old) })
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError})))
+	cfg := rescanTestConfig(0)
+	cfg.ScanTimeout = 5 * time.Millisecond
+	go runRescanLoop(ctx, reg, counterEnv(), testBudget(), cfg, collector.New(pricing.Embedded(), collector.Options{}), trigger, nil, func() { completed <- struct{}{} })
+	trigger <- struct{}{}
+	waitForRescan(t, completed, "failed rescan")
+	if got := logs.String(); !strings.Contains(got, "rescan failed") || !strings.Contains(got, "error_type=") {
+		t.Errorf("missing failure log: %s", got)
 	}
 }

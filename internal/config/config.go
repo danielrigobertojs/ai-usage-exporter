@@ -29,6 +29,8 @@ type Config struct {
 	ScanTimeout  time.Duration `yaml:"scan_timeout"`
 	Timezone     string        `yaml:"timezone"`
 	Providers    []string      `yaml:"providers"`
+	LogLevel     string        `yaml:"log_level"`
+	LogFormat    string        `yaml:"log_format"`
 	Labels       struct {
 		Project bool `yaml:"project"`
 	} `yaml:"labels"`
@@ -42,6 +44,8 @@ func defaultConfig() Config {
 		ScanInterval: time.Minute,
 		ScanTimeout:  30 * time.Second,
 		Timezone:     "Local",
+		LogLevel:     "info",
+		LogFormat:    "text",
 	}
 }
 
@@ -138,6 +142,12 @@ func applyEnv(cfg *Config, env func(string) string) error {
 	if v := env("AI_USAGE_PROVIDERS"); v != "" {
 		cfg.Providers = splitList(v)
 	}
+	if v := env("AI_USAGE_LOG_LEVEL"); v != "" {
+		cfg.LogLevel = strings.ToLower(v)
+	}
+	if v := env("AI_USAGE_LOG_FORMAT"); v != "" {
+		cfg.LogFormat = strings.ToLower(v)
+	}
 	if v := env("AI_USAGE_LABELS_PROJECT"); v != "" {
 		b, err := parseBool(v)
 		if err != nil {
@@ -156,7 +166,7 @@ func applyEnv(cfg *Config, env func(string) string) error {
 func applyFlags(cfg *Config, args []string) error {
 	fs := flag.NewFlagSet("ai-usage-exporter", flag.ContinueOnError)
 
-	var listen, metricsPath, scanInterval, scanTimeout, timezone, providers, labelsProject string
+	var listen, metricsPath, scanInterval, scanTimeout, timezone, providers, labelsProject, logLevel, logFormat string
 	fs.StringVar(&listen, "listen", "", "address to listen on, e.g. 127.0.0.1:9477")
 	fs.StringVar(&metricsPath, "metrics-path", "", "HTTP path to serve /metrics on")
 	fs.StringVar(&scanInterval, "scan-interval", "", "re-scan interval, e.g. 5m (0 disables re-scanning)")
@@ -164,6 +174,8 @@ func applyFlags(cfg *Config, args []string) error {
 	fs.StringVar(&timezone, "timezone", "", "IANA timezone (or \"Local\") month-to-date boundaries are computed in")
 	fs.StringVar(&providers, "providers", "", "comma-separated provider IDs to scan (empty means every registered provider)")
 	fs.StringVar(&labelsProject, "labels-project", "", "true/false: opt into the project label (see docs/metrics.md)")
+	fs.StringVar(&logLevel, "log-level", "", "debug, info, warn, or error")
+	fs.StringVar(&logFormat, "log-format", "", "text or json")
 
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)
@@ -202,6 +214,12 @@ func applyFlags(cfg *Config, args []string) error {
 		}
 		cfg.Labels.Project = b
 	}
+	if logLevel != "" {
+		cfg.LogLevel = strings.ToLower(logLevel)
+	}
+	if logFormat != "" {
+		cfg.LogFormat = strings.ToLower(logFormat)
+	}
 	return nil
 }
 
@@ -218,8 +236,16 @@ func (c Config) validate() error {
 	if _, err := c.Location(); err != nil {
 		return fmt.Errorf("config: timezone: %w", err)
 	}
+	if !validLogLevel(c.LogLevel) {
+		return fmt.Errorf("config: log_level must be debug, info, warn, or error, got %q", c.LogLevel)
+	}
+	if c.LogFormat != "text" && c.LogFormat != "json" {
+		return fmt.Errorf("config: log_format must be text or json, got %q", c.LogFormat)
+	}
 	return nil
 }
+
+func validLogLevel(v string) bool { return v == "debug" || v == "info" || v == "warn" || v == "error" }
 
 // Location resolves c.Timezone to a *time.Location, treating "" and
 // "Local" the same way: the host's local timezone.
