@@ -76,8 +76,19 @@ type Result struct {
 // Run returns an error when its context is cancelled before or during the
 // scan. Callers must not publish the partial aggregate in that case.
 func Run(ctx context.Context, reg *provider.Registry, env provider.Env, b provider.Budget, now time.Time, tz *time.Location) (Result, error) {
+	// Yield once so a timeout created immediately before Run gets a chance to
+	// fire on runtimes whose timer resolution is coarser than the requested
+	// budget. The deadline check below remains the synchronous backstop.
+	runtime.Gosched()
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
+	}
+	// On platforms with a coarse timer resolution a deadline can already be in
+	// the past while ctx.Err is still nil until the runtime delivers its timer.
+	// Honour the context contract synchronously so a zero/expired scan budget
+	// cannot accidentally publish a snapshot.
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return Result{}, context.DeadlineExceeded
 	}
 
 	start := time.Now()

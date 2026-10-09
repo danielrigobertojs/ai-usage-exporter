@@ -19,6 +19,7 @@ import (
 
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/cli"
 
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/aggregate"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/collector"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/config"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/pricing"
@@ -95,16 +96,8 @@ func run() error {
 	scanCtx, scanCancel := context.WithTimeout(scan.WithID(ctx, newScanID()), cfg.ScanTimeout)
 	result, err := scan.Run(scanCtx, reg, env, newBudget(), time.Now(), tz)
 	scanCancel()
-	startupFailed := err != nil
-	if startupFailed && cfg.FailOnStartupScanError {
-		return fmt.Errorf("startup scan: %w", err)
-	}
-	if startupFailed {
-		slog.Error("startup scan failed; serving without usage snapshot", "error_type", fmt.Sprintf("%T", err))
-		c.MarkScanFailure()
-	} else {
-		c.Set(result)
-		logSnapshotPublished(scanIDFromContext(scanCtx), result, catalog)
+	if err := applyStartupScanResult(cfg, c, result, err, catalog, scanIDFromContext(scanCtx)); err != nil {
+		return err
 	}
 
 	srv := server.New(cfg, c, c.Ready)
@@ -183,16 +176,46 @@ func newScanID() string {
 func eventCount(r scan.Result) int { return r.Snapshot.Events }
 func tokenCount(r scan.Result) int64 {
 	var total int64
-	for _, n := range r.Snapshot.Tokens {
+	for key, n := range r.Snapshot.Tokens {
+		if key.Window != aggregate.WindowAll {
+			continue
+		}
 		total += n
 	}
 	return total
 }
 
+func seriesCount(r scan.Result) int {
+	count := 0
+	for key := range r.Snapshot.Tokens {
+		if key.Window == aggregate.WindowAll {
+			count++
+		}
+	}
+	return count
+}
+
 func scanIDFromContext(ctx context.Context) string { return scan.ID(ctx) }
 
 func logSnapshotPublished(scanID string, r scan.Result, catalog pricing.Catalog) {
-	slog.Info("snapshot published", "scan_id", scanID, "events", eventCount(r), "tokens", tokenCount(r), "cost_usd", collector.TotalCostUSD(catalog, r.Snapshot.Tokens), "series", len(r.Snapshot.Tokens))
+	slog.Info("snapshot published", "scan_id", scanID, "events", eventCount(r), "tokens", tokenCount(r), "cost_usd", collector.TotalCostUSD(catalog, r.Snapshot.Tokens), "series", seriesCount(r))
+}
+
+// applyStartupScanResult makes the startup failure policy explicit and
+// testable: a failed initial scan is observable but never publishes partial
+// usage metrics unless the operator selected the strict mode.
+func applyStartupScanResult(cfg config.Config, c *collector.Collector, result scan.Result, scanErr error, catalog pricing.Catalog, scanID string) error {
+	if scanErr != nil {
+		if cfg.FailOnStartupScanError {
+			return fmt.Errorf("startup scan: %w", scanErr)
+		}
+		slog.Error("startup scan failed; serving without usage snapshot", "error_type", fmt.Sprintf("%T", scanErr))
+		c.MarkScanFailure()
+		return nil
+	}
+	c.Set(result)
+	logSnapshotPublished(scanID, result, catalog)
+	return nil
 }
 
 // filterProviders restricts reg to the given IDs, preserving registration

@@ -24,9 +24,9 @@ Ejemplo de una ejecución real (la marca de tiempo, duración e identificador
 varían):
 
 ```text
-time=2026-10-09T11:02:14.183-06:00 level=INFO msg="scan started" scan_id=e12773fbf885 providers=3
-time=2026-10-09T11:02:14.891-06:00 level=INFO msg="scan complete" scan_id=e12773fbf885 duration=708ms tools=3 events_duplicates=0 events_invalid=0
-time=2026-10-09T11:02:14.892-06:00 level=INFO msg="snapshot published" scan_id=e12773fbf885 events=324 tokens=2946946798 cost_usd=1234.56 series=133
+time=2026-10-09T11:47:28.465-06:00 level=INFO msg="scan started" scan_id=6f2c4d19f3a4 providers=3
+time=2026-10-09T11:47:29.161-06:00 level=INFO msg="scan complete" scan_id=6f2c4d19f3a4 duration=696ms tools=3 events_duplicates=0 events_invalid=0
+time=2026-10-09T11:47:29.162-06:00 level=INFO msg="snapshot published" scan_id=6f2c4d19f3a4 events=24451 tokens=1888381629 cost_usd=631.266668216 series=86
 ```
 
 The equivalent JSON mode is one valid JSON object per line:

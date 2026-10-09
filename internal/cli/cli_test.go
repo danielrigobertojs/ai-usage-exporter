@@ -11,6 +11,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,24 @@ func TestProvidersJSON(t *testing.T) {
 	}
 	if len(rows) != 3 {
 		t.Fatalf("providers=%d, want 3", len(rows))
+	}
+}
+
+func TestSubcommandsAcceptAndApplyLoggingFlags(t *testing.T) {
+	var out, errOut, logs bytes.Buffer
+	old := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(old) })
+	ConfigureLogger([]string{"providers", "--log-level", "debug", "--log-format", "json"}, &logs)
+	slog.Debug("cli logger configured", "scan_id", "cli-test")
+	var entry map[string]any
+	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+		t.Fatalf("logger output is not JSON: %v; %q", err, logs.String())
+	}
+	if entry["scan_id"] != "cli-test" {
+		t.Fatalf("logger output = %v, want scan correlation ID", entry)
+	}
+	if got := Execute([]string{"providers", "--log-level", "error", "--log-format", "json", "--output", "json"}, &out, &errOut); got != 0 {
+		t.Fatalf("exit=%d stderr=%s", got, errOut.String())
 	}
 }
 func TestReportRejectsWindow(t *testing.T) {

@@ -215,6 +215,21 @@ func TestRunRejectsAlreadyDoneContext(t *testing.T) {
 	}
 }
 
+type pastDeadlineContext struct{ context.Context }
+
+func (pastDeadlineContext) Deadline() (time.Time, bool) {
+	return time.Now().Add(-time.Nanosecond), true
+}
+
+func TestRunRejectsPastDeadlineBeforeTimerDelivery(t *testing.T) {
+	reg := provider.NewRegistry()
+	ctx := pastDeadlineContext{Context: context.Background()}
+	_, err := Run(ctx, reg, provider.Env{}, testBudget(), time.Now(), time.UTC)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Run: error = %v, want context.DeadlineExceeded", err)
+	}
+}
+
 func TestRunLogsCorrelatedAndRedactsPathsAboveDebug(t *testing.T) {
 	reg := provider.NewRegistry()
 	mustRegister(t, reg, namedFake{id: "alpha", eventsPerSource: 1})
