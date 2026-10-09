@@ -29,6 +29,12 @@ func TestLoadDefaultsWithoutFile(t *testing.T) {
 	}
 }
 
+func TestDefaultScanIntervalIsOneMinute(t *testing.T) {
+	if got, want := defaultConfig().ScanInterval, time.Minute; got != want {
+		t.Errorf("default ScanInterval = %s, want %s", got, want)
+	}
+}
+
 // TestLoadFileOverridesListenAndScanInterval covers step 1: testdata's
 // config.yaml overrides listen and scan_interval but leaves every other
 // field at its default.

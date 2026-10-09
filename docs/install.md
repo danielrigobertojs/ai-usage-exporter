@@ -47,13 +47,10 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now ai-usage-exporter.service
 ```
 
-The service has `Restart=on-failure`; it does not loop to refresh its startup
-snapshot. To opt into hourly refreshes, also copy the two
-`ai-usage-exporter-refresh.*` units and explicitly enable the timer:
-
-```bash
-sudo systemctl enable --now ai-usage-exporter-refresh.timer
-```
+The service has `Restart=on-failure`. El exporter reescanea el historial
+completo cada 60 segundos por defecto; no necesitas el timer de refresco para
+tener datos vivos. Si prefieres un snapshot congelado, configura
+`AI_USAGE_SCAN_INTERVAL=0` en la unidad principal.
 
 ## Windows
 
@@ -102,5 +99,6 @@ Copy `deploy/launchd/io.github.ai-usage-exporter.plist` into
 launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/io.github.ai-usage-exporter.plist
 ```
 
-The refresh plist is shipped disabled. To opt in, remove its `Disabled` key,
-copy it next to the main plist, and bootstrap it explicitly.
+El exporter de la plist principal reescanea cada 60 segundos por defecto. Para
+desactivarlo, añade `AI_USAGE_SCAN_INTERVAL=0` al entorno de esa plist; no hace
+falta cargar la plist de refresco para la monitorización viva.

@@ -16,7 +16,7 @@ Each doctor row includes the platform-resolved `roots`, a `skipped` total with
 the first parsing error when one occurred. Warnings stay on stderr, so stdout
 remains valid JSON for scripts even when a provider had parse failures.
 
-Supported windows are `24h`, `7d`, `30d`, `mtd`, and `all`. JSON always goes
+Supported windows are `1h`, `24h`, `7d`, `30d`, `mtd`, and `all`. JSON always goes
 to stdout; diagnostics go to stderr. Exit codes are 0 for success, 1 for an
 execution failure, and 2 for invalid command usage.
 

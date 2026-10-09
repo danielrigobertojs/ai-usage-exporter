@@ -129,7 +129,7 @@ func report(args []string, out, errOut io.Writer) int {
 	}
 	w := aggregate.Window(*window)
 	if !validWindow(w) {
-		fmt.Fprintln(errOut, "--window must be one of 24h, 7d, 30d, mtd, all")
+		fmt.Fprintln(errOut, "--window must be one of 1h, 24h, 7d, 30d, mtd, all")
 		return 2
 	}
 	if *format != "table" && *format != "json" {
@@ -202,7 +202,7 @@ func report(args []string, out, errOut io.Writer) int {
 	return 0
 }
 func validWindow(w aggregate.Window) bool {
-	return w == aggregate.Window24h || w == aggregate.Window7d || w == aggregate.Window30d || w == aggregate.WindowMTD || w == aggregate.WindowAll
+	return w == aggregate.Window1h || w == aggregate.Window24h || w == aggregate.Window7d || w == aggregate.Window30d || w == aggregate.WindowMTD || w == aggregate.WindowAll
 }
 func rate(c model.TokenClass, r pricing.Rates) float64 {
 	switch c {

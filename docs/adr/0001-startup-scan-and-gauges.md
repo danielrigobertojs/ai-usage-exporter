@@ -4,6 +4,23 @@
 - Estado: Aceptado
 - Revisión: reconsiderar si se necesita continuidad de serie entre reinicios (ver "Condición de reapertura")
 
+## Enmienda 2026-10-08 — reescaneo activo por defecto
+
+JCB-328 cambia el default de `scan_interval` de `0` a `60s`. No añade estado
+persistente, offsets ni acumulación entre escaneos: cada iteración vuelve a
+leer el historial disponible completo y reemplaza el snapshot con una foto
+nueva. Por ello un reinicio sigue pudiendo producir un salto y esta enmienda
+no satisface ni adelanta la condición de reapertura de continuidad de serie o
+retención histórica.
+
+La evidencia que justifica la nueva cadencia es una medición del 2026-10-08
+en macOS arm64 con Go 1.27.1 y `CGO_ENABLED=0`: después de calentar caché, el
+escaneo de 40 JSONL de Claude Code, 276 JSONL de Codex y una SQLite de
+OpenCode de 2,7 GB tardó 0,68 s. Un escaneo cada 60 s ocupa aproximadamente
+1,1 % del ciclo; un watcher incremental ahorraría poco a cambio de introducir
+estado que esta decisión rechaza. `scan_interval: 0` sigue siendo válido para
+quien necesite un snapshot congelado.
+
 ## Contexto
 
 `ai-usage-exporter` lee los logs locales de agentes de IA (Claude Code, Codex CLI,
@@ -27,14 +44,13 @@ antes de escribir cualquier provider:
 
 ## Decisión
 
-**El binario parsea los logs una sola vez, al arrancar el servicio.** No hay
-bucle de reescaneo, no hay watcher de filesystem, no hay estado agregado
-persistido entre arranques (ni en disco ni en una base propia). El snapshot
-resultante se sirve en `/metrics` tal cual hasta el siguiente arranque del
-proceso.
+**El binario parsea los logs completos al arrancar y, por defecto, cada 60
+segundos.** No hay watcher de filesystem ni estado agregado persistido entre
+arranques (ni en disco ni en una base propia). Cada reescaneo completo
+reemplaza el snapshot servido en `/metrics`.
 
 **Todas las series de uso se exponen como gauges agregados por ventana**
-(`24h`, `7d`, `30d`, `mtd`, `all`), calculados en el momento del escaneo a
+(`1h`, `24h`, `7d`, `30d`, `mtd`, `all`), calculados en el momento del escaneo a
 partir del historial completo disponible en disco — nunca como counters con
 sufijo `_total`. Se añaden gauges de frescura (`ai_usage_scan_timestamp_seconds`,
 `ai_usage_last_event_timestamp_seconds`) para que el operador pueda saber qué
@@ -95,21 +111,19 @@ crudos retienen. Se descarta para este proyecto porque:
 - Los providers deben deduplicar por id de mensaje al construir el snapshot
   (no por línea de log), para que la compactación y los forks de sesión no
   inflen los totales de una sola pasada de parseo.
-- Para refrescar el snapshot hay que reiniciar el proceso, salvo que se
-  active explícitamente el mecanismo opt-in descrito abajo: por defecto
-  (`scan_interval: 0`) no hay reescaneo y esta consecuencia se sostiene tal
-  cual.
+- El snapshot se refresca con un escaneo completo cada 60 segundos por
+  defecto. Configurar `scan_interval: 0` conserva el comportamiento de
+  snapshot congelado; `SIGHUP` solicita un reescaneo adicional.
 
-### Excepción explícita y opt-in: SIGHUP y `scan_interval`
+### Mecanismo de refresco: SIGHUP y `scan_interval`
 
-JCB-314 añade un disparador de reescaneo que el operador debe activar a
-propósito, sin contradecir la decisión de arriba: **el default sigue siendo
-cero reescaneos**. Dos formas de disparar uno, ambas apagadas salvo que se
-pidan:
+JCB-314 añade un disparador de reescaneo y JCB-328 cambia la cadencia por
+defecto a un escaneo cada 60 segundos, sin contradecir la decisión de arriba:
+cada ejecución sigue siendo una foto completa y sin estado. Dos formas de
+solicitar un escaneo adicional son:
 
 - Enviar `SIGHUP` al proceso en ejecución.
-- Configurar `scan_interval` a un valor mayor que cero (su default es `0`,
-  que lo desactiva).
+- Configurar `scan_interval`; su default es `60s` y `0` desactiva el ticker.
 
 Cada disparo vuelve a correr `scan.Run` completo y reemplaza el snapshot
 publicado — no hay estado incremental ni offset entre escaneos, igual que en

@@ -6,7 +6,7 @@
   "editable": true,
   "graphTooltip": 1,
   "timezone": "browser",
-  "refresh": "",
+  "refresh": "30s",
   "time": { "from": "now-30d", "to": "now" },
   "tags": ["ai-usage-exporter"],
   "templating": {
@@ -50,8 +50,9 @@
         "name": "window",
         "label": "window",
         "type": "custom",
-        "query": "24h,7d,30d,mtd,all",
+        "query": "1h,24h,7d,30d,mtd,all",
         "options": [
+          { "text": "1h", "value": "1h", "selected": false },
           { "text": "24h", "value": "24h", "selected": false },
           { "text": "7d", "value": "7d", "selected": false },
           { "text": "30d", "value": "30d", "selected": true },
@@ -66,11 +67,55 @@
   },
   "panels": [
     {
+      "id": 8,
+      "type": "stat",
+      "title": "Ahora: tokens (1h)",
+      "description": "Total de tokens consumidos en la última hora. Esta ventana corta se re-deriva del historial completo en cada escaneo; es una gauge, no un counter.",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "$datasource" }, "expr": "sum(ai_usage_tokens{window=\"1h\"})", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" }, "orientation": "horizontal", "textMode": "auto", "colorMode": "value", "graphMode": "none", "justifyMode": "auto" }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Ahora: coste (1h)",
+      "description": "Coste estimado acumulado en la última hora, calculado con el catálogo de precios vigente en el último escaneo completo.",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "$datasource" }, "expr": "sum(ai_usage_cost_usd{window=\"1h\"})", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" }, "orientation": "horizontal", "textMode": "auto", "colorMode": "value", "graphMode": "none", "justifyMode": "auto" }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Ahora: uso continuo (1h)",
+      "description": "Tokens de la ventana 1h por herramienta a lo largo del tiempo. Las variaciones muestran los reescaneos completos; nunca aplicar rate() ni increase() a esta gauge.",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "$datasource" }, "expr": "sum by (tool) (ai_usage_tokens{window=\"1h\"})", "legendFormat": "{{tool}}", "instant": false }],
+      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
+      "options": {}
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Ahora: frescura del escaneo",
+      "description": "Segundos desde el último escaneo completo. Verde por debajo del intervalo por defecto de 60 s; amarillo o rojo indican que el reescaneo se retrasa o falla.",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "$datasource" }, "expr": "time() - ai_usage_scan_timestamp_seconds", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 60 }, { "color": "red", "value": 120 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" }, "orientation": "horizontal", "textMode": "auto", "colorMode": "value", "graphMode": "none", "justifyMode": "auto" }
+    },
+    {
       "id": 1,
       "type": "stat",
       "title": "Fila de estado",
-      "description": "Cuatro cifras de estado para la ventana $window: tokens totales, coste estimado, sesiones distintas, y frescura del snapshot (time() - ai_usage_scan_timestamp_seconds, en segundos). Este exporter parsea una sola vez al arrancar (ADR-001): la cuarta cifra no es decorativa, es la única señal en este dashboard de que los datos están viejos porque el proceso lleva mucho tiempo sin reiniciarse. Umbral amarillo a partir de 1h sin reinicio, rojo a partir de 24h.",
-      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "description": "Tres cifras de estado para la ventana $window: tokens totales, coste estimado y sesiones distintas. Cada una es una gauge agregada desde el historial local en el último escaneo completo.",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
       "targets": [
         {
@@ -93,13 +138,6 @@
           "expr": "sum(ai_usage_sessions{window=\"$window\", tool=~\"$tool\"})",
           "legendFormat": "Sesiones",
           "instant": true
-        },
-        {
-          "refId": "D",
-          "datasource": { "type": "prometheus", "uid": "$datasource" },
-          "expr": "time() - ai_usage_scan_timestamp_seconds",
-          "legendFormat": "Frescura del snapshot",
-          "instant": true
         }
       ],
       "fieldConfig": {
@@ -114,23 +152,6 @@
           {
             "matcher": { "id": "byFrameRefID", "options": "B" },
             "properties": [{ "id": "unit", "value": "currencyUSD" }]
-          },
-          {
-            "matcher": { "id": "byFrameRefID", "options": "D" },
-            "properties": [
-              { "id": "unit", "value": "s" },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    { "color": "green", "value": null },
-                    { "color": "yellow", "value": 3600 },
-                    { "color": "red", "value": 86400 }
-                  ]
-                }
-              }
-            ]
           }
         ]
       },
@@ -148,7 +169,7 @@
       "type": "barchart",
       "title": "Tokens por herramienta",
       "description": "Tokens totales de la ventana $window agregados por tool, sin distinguir modelo ni clase de token. Es una gauge agregada por ventana (ADR-001), no un counter: no aplicar rate() ni increase() sobre esta serie.",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
       "targets": [
         {
@@ -168,7 +189,7 @@
       "type": "barchart",
       "title": "Coste por modelo",
       "description": "Coste estimado en USD de la ventana $window agregado por model, ordenado de mayor a menor. Derivado del catálogo de precios vigente al momento del escaneo, no del coste nativo que algún provider pueda reportar (docs/metrics.md, 'Reconciliación con el coste nativo').",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
       "targets": [
         {
@@ -191,7 +212,7 @@
       "type": "piechart",
       "title": "Reparto por clase de token",
       "description": "Tokens de la ventana $window repartidos por token_type (input, output, cache_read, cache_write, reasoning). Las cinco clases son disjuntas por contrato (docs/metrics.md): esta dona es la forma más directa de ver cuánto del consumo ya se está ahorrando vía caché.",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
       "targets": [
         {
@@ -211,7 +232,7 @@
       "type": "timeseries",
       "title": "Tendencia de tokens",
       "description": "ai_usage_tokens{window=\"24h\"} por tool, en el tiempo. ADVERTENCIA: esta serie es una gauge agregada por ventana, no un counter (ADR-001) — NUNCA aplicar rate() ni increase() sobre ella. La línea avanza al ritmo de los reinicios/re-escaneos del exporter, no de forma continua: un tramo plano entre dos puntos es el proceso corriendo sin reiniciar, no ausencia de uso.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
       "targets": [
         {
@@ -230,7 +251,7 @@
       "type": "stat",
       "title": "Coste acumulado del mes",
       "description": "sum(ai_usage_cost_usd{window=\"mtd\"}) across todos los tool y model. Ventana month-to-date re-derivada del historial local en cada arranque (ADR-001): no es un contador que suba de forma monótona durante la vida del proceso.",
-      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 20 },
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 26 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
       "targets": [
         {
@@ -255,7 +276,7 @@
       "type": "table",
       "title": "Salud del exporter",
       "description": "Estado del último escaneo al arranque: disponibilidad por provider, archivos/filas leídas, errores de parseo, duración del escaneo, timestamp del evento más reciente por tool, y metadatos de build. Todo gauge fijado en el arranque (ADR-001): esta tabla no cambia hasta el siguiente reinicio del proceso.",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 30 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
       "targets": [
         {

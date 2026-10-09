@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"sort"
@@ -19,6 +20,7 @@ import (
 	"testing"
 
 	dashboards "github.com/danielrigobertojs/ai-usage-exporter/deploy/grafana/dashboards"
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/aggregate"
 )
 
 type panel struct {
@@ -33,11 +35,30 @@ type target struct {
 }
 
 type grafanaDashboard struct {
-	Title  string  `json:"title"`
-	Panels []panel `json:"panels"`
+	Title      string              `json:"title"`
+	Refresh    string              `json:"refresh"`
+	Templating dashboardTemplating `json:"templating"`
+	Panels     []panel             `json:"panels"`
+}
+
+type dashboardTemplating struct {
+	List []dashboardVariable `json:"list"`
+}
+
+type dashboardVariable struct {
+	Name    string                    `json:"name"`
+	Options []dashboardVariableOption `json:"options"`
+}
+
+type dashboardVariableOption struct {
+	Value string `json:"value"`
 }
 
 var wantPanelTitles = []string{
+	"Ahora: tokens (1h)",
+	"Ahora: coste (1h)",
+	"Ahora: uso continuo (1h)",
+	"Ahora: frescura del escaneo",
 	"Fila de estado",
 	"Tokens por herramienta",
 	"Coste por modelo",
@@ -69,6 +90,40 @@ func TestDashboardDeserializes(t *testing.T) {
 	d := loadDashboard(t)
 	if len(d.Panels) == 0 {
 		t.Fatal("dashboard deserialized but has zero panels")
+	}
+}
+
+func TestDashboardRefreshAndWindowOptions(t *testing.T) {
+	d := loadDashboard(t)
+	if d.Refresh != "30s" {
+		t.Errorf("dashboard refresh = %q, want 30s for live monitoring", d.Refresh)
+	}
+
+	var window dashboardVariable
+	for _, variable := range d.Templating.List {
+		if variable.Name == "window" {
+			window = variable
+			break
+		}
+	}
+	if window.Name == "" {
+		t.Fatal("dashboard has no window variable")
+	}
+
+	got := make([]string, 0, len(window.Options))
+	for _, option := range window.Options {
+		got = append(got, option.Value)
+	}
+	want := []string{
+		string(aggregate.Window1h),
+		string(aggregate.Window24h),
+		string(aggregate.Window7d),
+		string(aggregate.Window30d),
+		string(aggregate.WindowMTD),
+		string(aggregate.WindowAll),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("window options = %v, want %v", got, want)
 	}
 }
 

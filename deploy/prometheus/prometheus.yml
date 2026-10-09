@@ -2,15 +2,11 @@
 # binario lee logs locales del usuario (~/.claude, ~/.codex, ~/.local/share/opencode)
 # y JCB-316 no depende de la imagen de contenedor de JCB-317.
 #
-# scrape_interval en 60s es intencional, no un valor por defecto sin pensar:
-# /metrics sirve un único snapshot tomado al arrancar el proceso (ver
-# ADR-001, "parseo al arranque, gauges, sin estado persistente"). El valor
-# no cambia entre scrapes salvo que el exporter se reinicie o reciba un
-# reescaneo explícito (SIGHUP / scan_interval), así que scrapear más
-# seguido que eso no aporta resolución real: solo genera más muestras
-# idénticas en el TSDB.
+# El exporter reescanea el historial completo cada 60s por defecto. Un scrape
+# cada 15s hace visible con poca demora el snapshot renovado y la frescura del
+# escaneo, sin asumir que las gauges de ventana son counters.
 global:
-  scrape_interval: 60s
+  scrape_interval: 15s
 
 scrape_configs:
   - job_name: ai-usage-exporter

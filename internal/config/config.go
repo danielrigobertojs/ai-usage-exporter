@@ -39,7 +39,7 @@ func defaultConfig() Config {
 	return Config{
 		Listen:       "127.0.0.1:9477",
 		MetricsPath:  "/metrics",
-		ScanInterval: 0,
+		ScanInterval: time.Minute,
 		ScanTimeout:  30 * time.Second,
 		Timezone:     "Local",
 	}
@@ -159,7 +159,7 @@ func applyFlags(cfg *Config, args []string) error {
 	var listen, metricsPath, scanInterval, scanTimeout, timezone, providers, labelsProject string
 	fs.StringVar(&listen, "listen", "", "address to listen on, e.g. 127.0.0.1:9477")
 	fs.StringVar(&metricsPath, "metrics-path", "", "HTTP path to serve /metrics on")
-	fs.StringVar(&scanInterval, "scan-interval", "", "re-scan interval, e.g. 5m (0 or empty disables re-scanning)")
+	fs.StringVar(&scanInterval, "scan-interval", "", "re-scan interval, e.g. 5m (0 disables re-scanning)")
 	fs.StringVar(&scanTimeout, "scan-timeout", "", "per-scan timeout, e.g. 30s")
 	fs.StringVar(&timezone, "timezone", "", "IANA timezone (or \"Local\") month-to-date boundaries are computed in")
 	fs.StringVar(&providers, "providers", "", "comma-separated provider IDs to scan (empty means every registered provider)")

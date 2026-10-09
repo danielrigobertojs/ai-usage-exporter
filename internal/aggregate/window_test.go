@@ -27,6 +27,11 @@ func TestWindows(t *testing.T) {
 			want:    []Window{Window24h, Window7d, Window30d, WindowMTD, WindowAll},
 		},
 		{
+			name:    "exactly one hour ago belongs to the 1h window",
+			eventAt: now.Add(-time.Hour),
+			want:    []Window{Window1h, Window24h, Window7d, Window30d, WindowMTD, WindowAll},
+		},
+		{
 			name:    "10 days ago is outside 24h/7d but still this month",
 			eventAt: now.Add(-10 * 24 * time.Hour),
 			want:    []Window{Window30d, WindowMTD, WindowAll},
@@ -44,7 +49,7 @@ func TestWindows(t *testing.T) {
 		{
 			name:    "exactly now",
 			eventAt: now,
-			want:    []Window{Window24h, Window7d, Window30d, WindowMTD, WindowAll},
+			want:    []Window{Window1h, Window24h, Window7d, Window30d, WindowMTD, WindowAll},
 		},
 		{
 			name:    "earlier same local month, before day 1 boundary in UTC but after it in tz",
@@ -66,7 +71,7 @@ func TestWindows(t *testing.T) {
 func TestWindowsNilLocationDefaultsToUTC(t *testing.T) {
 	now := time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)
 	got := Windows(now.Add(-time.Hour), now, nil)
-	want := []Window{Window24h, Window7d, Window30d, WindowMTD, WindowAll}
+	want := []Window{Window1h, Window24h, Window7d, Window30d, WindowMTD, WindowAll}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Windows() with nil tz = %v, want %v", got, want)
 	}
