@@ -76,6 +76,10 @@ type Result struct {
 // Run returns an error when its context is cancelled before or during the
 // scan. Callers must not publish the partial aggregate in that case.
 func Run(ctx context.Context, reg *provider.Registry, env provider.Env, b provider.Budget, now time.Time, tz *time.Location) (Result, error) {
+	// Yield once so a timeout created immediately before Run gets a chance to
+	// fire on runtimes whose timer resolution is coarser than the requested
+	// budget. The deadline check below remains the synchronous backstop.
+	runtime.Gosched()
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
