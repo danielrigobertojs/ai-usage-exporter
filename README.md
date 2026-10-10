@@ -4,8 +4,7 @@
 
 Go Prometheus exporter for local AI-agent usage (Claude Code, Codex CLI,
 OpenCode, and others): tokens, models, sessions, and cost read directly from
-each tool's local logs and exposed through a
-endpoint `/metrics`.
+each tool's local logs and exposed on an HTTP endpoint `/metrics`.
 
 ### Project status
 
@@ -43,6 +42,14 @@ to make an initial timeout fatal.
 ([ADR-001](docs/adr/0001-startup-scan-and-gauges.md)), refreshed every 60
 seconds by default. `AI_USAGE_SCAN_INTERVAL=0` retains a frozen snapshot;
 `SIGHUP` can also request a rescan.
+
+### Cost-estimate change in JCB-327
+
+Versions before `bfdcfbf` understated estimated cost because cached tokens
+were priced at zero when models.dev selected a reseller entry without cache
+rates. A 30-day cost can therefore increase by about 4.4× after upgrading;
+that is the correction, not a usage regression. See
+[ADR-006](docs/adr/0006-models-dev-provider-precedence.md).
 
 ### Requirements
 
