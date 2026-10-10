@@ -251,6 +251,31 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			k.Tool, string(k.Window))
 	}
 
+	// Sessions have the closed, enumerable tool/window label set. Tool calls
+	// are zero-filled only for tools that have reported them in this snapshot:
+	// an unsupported count is unknown, not zero. Tokens and cost deliberately
+	// do not receive this treatment because their model label is open.
+	reportsToolCalls := make(map[string]bool)
+	for scope := range snap.ToolCalls {
+		reportsToolCalls[scope.Tool] = true
+	}
+	for tool, tr := range result.PerTool {
+		if !tr.Available {
+			continue
+		}
+		for _, window := range aggregate.AllWindows() {
+			scope := aggregate.ScopeKey{Tool: tool, Window: window}
+			if _, ok := snap.Sessions[scope]; !ok {
+				ch <- prometheus.MustNewConstMetric(c.sessions, prometheus.GaugeValue, 0,
+					tool, string(window))
+			}
+			if _, ok := snap.ToolCalls[scope]; !ok && reportsToolCalls[tool] {
+				ch <- prometheus.MustNewConstMetric(c.toolCalls, prometheus.GaugeValue, 0,
+					tool, string(window))
+			}
+		}
+	}
+
 	for tool, ts := range snap.LastEventAt {
 		ch <- prometheus.MustNewConstMetric(c.lastEventTimestamp, prometheus.GaugeValue,
 			float64(ts.Unix()), tool)

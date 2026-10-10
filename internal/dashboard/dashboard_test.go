@@ -150,6 +150,32 @@ func TestDashboardHasExpectedPanels(t *testing.T) {
 	}
 }
 
+func TestLivePanelsRepresentEmptyUsageAsZero(t *testing.T) {
+	d := loadDashboard(t)
+	want := map[string]string{
+		"Ahora: tokens (1h)":       "sum(ai_usage_tokens{window=\"1h\"}) or vector(0)",
+		"Ahora: coste (1h)":        "sum(ai_usage_cost_usd{window=\"1h\"}) or vector(0)",
+		"Ahora: uso continuo (1h)": "sum by (tool) (ai_usage_tokens{window=\"1h\"}) or (0 * max by (tool) (ai_usage_provider_available))",
+	}
+	for _, p := range flattenPanels(d.Panels) {
+		expr, ok := want[p.Title]
+		if !ok {
+			continue
+		}
+		if len(p.Targets) != 1 || p.Targets[0].Expr != expr {
+			got := ""
+			if len(p.Targets) == 1 {
+				got = p.Targets[0].Expr
+			}
+			t.Errorf("panel %q expression = %q, want %q", p.Title, got, expr)
+		}
+		delete(want, p.Title)
+	}
+	for title := range want {
+		t.Errorf("dashboard is missing live panel %q", title)
+	}
+}
+
 // contractMetricHeader matches a metrics.md section header for one metric,
 // e.g. "### `ai_usage_tokens`".
 var contractMetricHeader = regexp.MustCompile("^### `(ai_usage_[a-z0-9_]+)`$")

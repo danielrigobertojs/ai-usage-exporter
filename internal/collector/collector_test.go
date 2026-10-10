@@ -181,7 +181,12 @@ ai_usage_scan_files{tool="claude-code"} 4
 ai_usage_scan_timestamp_seconds 1.7672256e+09
 # HELP ai_usage_sessions Number of distinct tool sessions with at least one event within window. A resumed or forked session counts once.
 # TYPE ai_usage_sessions gauge
+ai_usage_sessions{tool="claude-code",window="1h"} 0
+ai_usage_sessions{tool="claude-code",window="24h"} 0
+ai_usage_sessions{tool="claude-code",window="30d"} 0
+ai_usage_sessions{tool="claude-code",window="7d"} 0
 ai_usage_sessions{tool="claude-code",window="all"} 3
+ai_usage_sessions{tool="claude-code",window="mtd"} 0
 # HELP ai_usage_tokens Number of token_type tokens consumed by model within tool, aggregated over window, per the local history available at scan time. Deduplicated by message id.
 # TYPE ai_usage_tokens gauge
 ai_usage_tokens{model="claude-opus-4",token_type="input",tool="claude-code",window="all"} 100
@@ -189,7 +194,12 @@ ai_usage_tokens{model="claude-opus-4",token_type="output",tool="claude-code",win
 ai_usage_tokens{model="unknown-model",token_type="input",tool="claude-code",window="all"} 7
 # HELP ai_usage_tool_calls Number of tool/function calls recorded by tool within window.
 # TYPE ai_usage_tool_calls gauge
+ai_usage_tool_calls{tool="claude-code",window="1h"} 0
+ai_usage_tool_calls{tool="claude-code",window="24h"} 0
+ai_usage_tool_calls{tool="claude-code",window="30d"} 0
+ai_usage_tool_calls{tool="claude-code",window="7d"} 0
 ai_usage_tool_calls{tool="claude-code",window="all"} 9
+ai_usage_tool_calls{tool="claude-code",window="mtd"} 0
 `, version.Commit, runtime.Version(), version.Version)
 
 	metricNames := []string{

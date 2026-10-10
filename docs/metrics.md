@@ -58,6 +58,10 @@ reciente sin introducir labels ni estado persistente.
   `model` dentro de `tool`, agregados sobre la ventana `window`, según el
   historial local disponible en el momento del escaneo. Deduplicado por id
   de mensaje, nunca por línea de log cruda.
+- **Ausente**, nunca materializada como `0`, cuando ningún evento produjo esa
+  combinación (`tool`, `model`, `token_type`, `window`). `model` y
+  `token_type` forman un conjunto abierto en la práctica; inventar sus
+  combinaciones vacías incrementaría cardinalidad sin límite útil.
 
 #### Invariante: las clases de `token_type` son disjuntas
 
@@ -101,8 +105,9 @@ herramienta reporta por su cuenta, cuando lo reporta.
 - **Significado:** coste estimado en dólares atribuible a `model` dentro de
   `tool` en la ventana `window`, derivado de los tokens consumidos y la
   tabla de precios vigente en el momento del escaneo.
-- **Ausente**, nunca en `0`, para un par (`tool`, `model`) que el catálogo de
-  precios no conoce — un modelo nuevo no es un modelo gratis.
+- **Ausente**, nunca en `0`, cuando no hubo tokens medidos para ese
+  (`tool`, `model`, `window`) o cuando el catálogo no conoce el par
+  (`tool`, `model`) — un modelo nuevo no es un modelo gratis.
 
 #### Reconciliación con el coste nativo de un provider
 
@@ -123,6 +128,9 @@ reconciliar.
 - **Significado:** número de sesiones distintas de `tool` con al menos un
   evento dentro de la ventana `window`. Una sesión cuenta una sola vez
   incluso si fue reanudada (`/resume`) o bifurcada.
+- Para cada provider disponible, se materializa una serie para cada ventana
+  soportada; `0` significa que el escaneo sano no encontró sesiones en esa
+  ventana. No se emite serie para un provider no disponible.
 
 ### `ai_usage_tool_calls`
 
@@ -132,6 +140,29 @@ reconciliar.
 - **Significado:** número de invocaciones de herramientas (tool calls, en el
   sentido de function/tool calling del modelo) registradas por `tool` dentro
   de la ventana `window`.
+- Para cada provider disponible que ya reportó tool calls en alguna ventana,
+  se materializa una serie para cada ventana soportada; `0` significa que el
+  escaneo sano no encontró tool calls en esa ventana. No se emite serie para
+  un provider no disponible ni para uno cuyo formato no reporta tool calls.
+
+## Contrato de ceros y monitorización viva
+
+La materialización de ceros depende de si el conjunto de labels está cerrado:
+
+1. `ai_usage_sessions` solo lleva `tool` y `window`, conjuntos enumerables;
+   cada provider disponible publica las seis ventanas, por lo que la ausencia
+   de eventos se representa como `0`. `ai_usage_tool_calls` aplica lo mismo
+   únicamente a tools que ya reportaron tool calls: un formato que no puede
+   contarlos permanece ausente, porque desconocido no es cero.
+2. `ai_usage_tokens` y `ai_usage_cost_usd` incluyen `model` (y tokens además
+   `token_type`), conjuntos abiertos; solo se publican si hubo consumo medido.
+   No se inventan modelos, clases o costes a cero.
+3. Los paneles de la fila "Ahora" convierten la ausencia agregada a cero con
+   `or vector(0)` y completan el gráfico por herramienta con
+   `or (0 * max by (tool) (ai_usage_provider_available))`.
+4. La ausencia de datos no es una alerta de consumo: alertas de disponibilidad
+   o frescura deben consultar `ai_usage_provider_available` y
+   `ai_usage_scan_timestamp_seconds`, no la presencia de series de tokens.
 
 ### `ai_usage_last_event_timestamp_seconds`
 
