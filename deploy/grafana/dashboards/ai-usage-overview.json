@@ -122,21 +122,21 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "$datasource" },
           "expr": "sum(ai_usage_tokens{window=\"$window\", tool=~\"$tool\"})",
-          "legendFormat": "Tokens totales",
+          "legendFormat": "Total tokens",
           "instant": true
         },
         {
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "$datasource" },
           "expr": "sum(ai_usage_cost_usd{window=\"$window\", tool=~\"$tool\", model=~\"$model\"})",
-          "legendFormat": "Coste USD",
+          "legendFormat": "Cost USD",
           "instant": true
         },
         {
           "refId": "C",
           "datasource": { "type": "prometheus", "uid": "$datasource" },
           "expr": "sum(ai_usage_sessions{window=\"$window\", tool=~\"$tool\"})",
-          "legendFormat": "Sesiones",
+          "legendFormat": "Sessions",
           "instant": true
         }
       ],
@@ -188,7 +188,7 @@
       "id": 3,
       "type": "barchart",
       "title": "Cost by model",
-      "description": "Estimated USD cost for the $window window, aggregated by model and ordered descending. Derived from the price catalog current at scan time, not from native cost reported by a provider (docs/metrics.md, 'Reconciliation with native provider cost').",
+      "description": "Estimated USD cost for the $window window, aggregated by model and ordered descending. Derived from the price catalog current at scan time, not from native cost reported by a provider (docs/metrics.md, 'Reconciliation with a provider's native cost').",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
       "targets": [
@@ -231,7 +231,7 @@
       "id": 5,
       "type": "timeseries",
       "title": "Token trend",
-      "description": "ai_usage_tokens{window=\"24h\"} by tool over time. WARNING: this is a windowed gauge, not a counter (ADR-001); never apply rate() or increase(). The line advances with exporter restarts or rescans, not continuously.",
+      "description": "ai_usage_tokens{window=\"24h\"} by tool over time. WARNING: this is a windowed gauge, not a counter (ADR-001); never apply rate() or increase(). The line advances with exporter restarts or rescans, not continuously: a flat segment between two points means the process is running without restarting, not an absence of usage.",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
       "targets": [
