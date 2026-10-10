@@ -1,73 +1,72 @@
-## Stack de ejemplo: Prometheus + Grafana
+## Example stack: Prometheus + Grafana
 
-Este directorio levanta Prometheus y Grafana con el dashboard de
-`ai-usage-exporter` ya provisionado. **No** levanta el exporter: eso corre en
-el host, fuera de Docker, porque lee logs locales del usuario
-(`~/.claude`, `~/.codex`, `~/.local/share/opencode`) y no tiene sentido
-montarlos dentro de un contenedor.
+This directory starts Prometheus and Grafana with the `ai-usage-exporter`
+dashboard already provisioned. It does **not** start the exporter: the exporter
+runs on the host, outside Docker, because it reads the user's local logs
+(`~/.claude`, `~/.codex`, `~/.local/share/opencode`), which should not be
+mounted into a container.
 
-### Arrancar en 3 comandos
+### Start in three commands
 
 ```bash
-./ai-usage-exporter --listen 127.0.0.1:9477      # 1. el exporter, en el host
-cp deploy/.env.example deploy/.env               # 2. credenciales de Grafana (editar antes de seguir)
+./ai-usage-exporter --listen 127.0.0.1:9477      # 1. the exporter, on the host
+cp deploy/.env.example deploy/.env               # 2. Grafana credentials (edit before continuing)
 docker compose -f deploy/docker-compose.yml up -d  # 3. Prometheus + Grafana
 ```
 
-Grafana queda en **http://localhost:3000**, con el dashboard "AI Usage
-Exporter — Overview" ya cargado en Home → Dashboards. No hace falta importar
-nada a mano: `deploy/grafana/provisioning/dashboards/ai-usage-exporter.yaml`
-le dice a Grafana que lo lea de `deploy/grafana/dashboards/`.
+Grafana is available at **http://localhost:3000**, with the "AI Usage
+Exporter — Overview" dashboard already loaded under Home → Dashboards. No
+manual import is required: `deploy/grafana/provisioning/dashboards/ai-usage-exporter.yaml`
+tells Grafana to read it from `deploy/grafana/dashboards/`.
 
-El paso 2 falla a propósito si `deploy/.env` no existe (`GRAFANA_ADMIN_USER`
-/ `GRAFANA_ADMIN_PASSWORD` no tienen valor por defecto en
-`docker-compose.yml`): no hay ninguna credencial hardcodeada en este repo,
-ni un `admin/admin` implícito. `deploy/.env` está en `.gitignore`; no lo
-commitees.
+Step 2 intentionally fails if `deploy/.env` does not exist
+(`GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD` have no default value in
+`docker-compose.yml`): this repository contains no hard-coded credentials or
+implicit `admin/admin` account. `deploy/.env` is listed in `.gitignore`; do
+not commit it.
 
-### Si el exporter no corre en el host
+### If the exporter does not run on the host
 
-`deploy/prometheus/prometheus.yml` apunta a `host.docker.internal:9477`,
-que Docker resuelve a la IP del host — funciona así en Docker Desktop
-(macOS/Windows) y, en Linux, gracias al `extra_hosts: host-gateway` que ya
-tiene el servicio `prometheus` en `docker-compose.yml`.
+`deploy/prometheus/prometheus.yml` targets `host.docker.internal:9477`, which
+Docker resolves to the host IP. This works in Docker Desktop (macOS/Windows)
+and on Linux through the `extra_hosts: host-gateway` entry already present on
+the `prometheus` service in `docker-compose.yml`.
 
-Si el exporter corre en otra máquina, o en otro puerto, cambia el único
-target en `deploy/prometheus/prometheus.yml`:
+If the exporter runs on another machine or port, change the single target in
+`deploy/prometheus/prometheus.yml`:
 
 ```yaml
 scrape_configs:
   - job_name: ai-usage-exporter
     static_configs:
-      - targets: ["otra-maquina:9477"]
+      - targets: ["another-machine:9477"]
 ```
 
-y reinicia Prometheus (`docker compose -f deploy/docker-compose.yml restart prometheus`).
+Then restart Prometheus (`docker compose -f deploy/docker-compose.yml restart prometheus`).
 
-### Importar solo el dashboard en una Grafana existente
+### Import only the dashboard into an existing Grafana installation
 
-Si ya tienes Grafana corriendo y solo quieres el dashboard, sin este
+If you already have Grafana running and only want the dashboard, without this
 `docker-compose.yml`:
 
-1. Asegúrate de tener un datasource de Prometheus apuntando a donde sea que
-   scrapees `ai-usage-exporter`.
-2. Dashboards → New → Import, y sube
+1. Ensure that a Prometheus data source scrapes `ai-usage-exporter`.
+2. Go to Dashboards → New → Import and upload
    `deploy/grafana/dashboards/ai-usage-overview.json`.
-3. Grafana te pedirá elegir el datasource para la variable `$datasource`
-   (es una variable de tipo "datasource", no un UID fijo — por eso el mismo
-   JSON sirve igual para provisioning por archivo que para import manual).
+3. Grafana prompts you to choose the data source for the `$datasource`
+   variable (it is a `datasource` variable, not a fixed UID, which is why the
+   same JSON supports both file provisioning and manual import).
 
-### Por qué `scrape_interval: 15s`
+### Why `scrape_interval: 15s`
 
-`ai-usage-exporter` reescanea los logs completos cada 60 segundos por
-defecto (ver [ADR-001](../docs/adr/0001-startup-scan-and-gauges.md)).
-Scrapear cada 15 segundos hace visibles el snapshot nuevo y su frescura sin
-esperar otro minuto de Prometheus. Las métricas de uso siguen siendo gauges
-por ventana y no se convierten en counters.
+`ai-usage-exporter` rescans the complete logs every 60 seconds by default
+(see [ADR-001](../docs/adr/0001-startup-scan-and-gauges.md)). Scraping every
+15 seconds makes the new snapshot and its freshness visible without waiting
+for another Prometheus minute. Usage metrics remain windowed gauges; they do
+not become counters.
 
-### Qué no mirar en las series de uso
+### What not to do with usage series
 
-Las métricas de uso (`ai_usage_tokens`, `ai_usage_cost_usd`,
-`ai_usage_sessions`, `ai_usage_tool_calls`) son **gauges agregados por
-ventana**, no counters: nunca les apliques `rate()` ni `increase()`. El
-panel "Tendencia de tokens" del dashboard lo recuerda en su descripción.
+Usage metrics (`ai_usage_tokens`, `ai_usage_cost_usd`,
+`ai_usage_sessions`, `ai_usage_tool_calls`) are **windowed aggregate gauges**,
+not counters: never apply `rate()` or `increase()` to them. The dashboard's
+"Token trend" panel repeats this in its description.
