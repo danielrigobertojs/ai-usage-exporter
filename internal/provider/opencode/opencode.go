@@ -3,8 +3,9 @@
 
 // Package opencode implements the provider.Provider for OpenCode, the only
 // supported tool that keeps its history in SQLite instead of JSONL:
-// ~/.local/share/opencode/opencode.db, tables session/message, with tokens
-// and native cost living inside message.data's JSON blob.
+// ~/.local/share/opencode/opencode.db, tables session/message/part, with
+// tokens and native cost living inside message.data's JSON blob and tool-call
+// counts in part.data.
 //
 // The operational risk here isn't parsing, it's the database connection
 // itself: opencode.db can be open and in WAL mode under a live agent, and
@@ -82,7 +83,14 @@ func DSN(path string) string {
 // can be valid JSON and still not decode into messageData the way Parse
 // expects.
 const query = `
-SELECT m.id, m.session_id, m.data, s.directory
+SELECT m.id, m.session_id, m.data, s.directory,
+       (
+               SELECT COUNT(*)
+               FROM part p
+               WHERE p.message_id = m.id
+                 AND json_valid(p.data)
+                 AND json_extract(p.data, '$.type') = 'tool'
+       ) AS tool_calls
 FROM message m JOIN session s ON s.id = m.session_id
 WHERE json_valid(m.data) AND json_extract(m.data, '$.role') = 'assistant'
 ORDER BY m.id`
@@ -159,7 +167,8 @@ func (openCodeProvider) Parse(ctx context.Context, src provider.Source, emit fun
 		}
 
 		var id, sessionID, data, directory string
-		if err := rows.Scan(&id, &sessionID, &data, &directory); err != nil {
+		var toolCalls int64
+		if err := rows.Scan(&id, &sessionID, &data, &directory, &toolCalls); err != nil {
 			return privacy.Err(toolID, filepath.Base(src.Path), 0, err)
 		}
 
@@ -183,6 +192,7 @@ func (openCodeProvider) Parse(ctx context.Context, src provider.Source, emit fun
 			Model:     md.ModelID,
 			ProjectID: directory,
 			Role:      "assistant",
+			ToolCalls: toolCalls,
 			Timestamp: time.UnixMilli(md.Time.Created).UTC(),
 			Tokens: map[model.TokenClass]int64{
 				model.TokenInput:      md.Tokens.Input,
