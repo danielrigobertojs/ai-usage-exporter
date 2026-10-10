@@ -251,11 +251,14 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			k.Tool, string(k.Window))
 	}
 
-	// Sessions and tool calls have only the closed, enumerable tool/window
-	// label set. For a provider successfully read in this scan, a missing
-	// aggregation key means zero activity in that window, not unknown data.
-	// Tokens and cost deliberately do not receive this treatment: their model
-	// label is open and zero-filling would invent unbounded series.
+	// Sessions have the closed, enumerable tool/window label set. Tool calls
+	// are zero-filled only for tools that have reported them in this snapshot:
+	// an unsupported count is unknown, not zero. Tokens and cost deliberately
+	// do not receive this treatment because their model label is open.
+	reportsToolCalls := make(map[string]bool)
+	for scope := range snap.ToolCalls {
+		reportsToolCalls[scope.Tool] = true
+	}
 	for tool, tr := range result.PerTool {
 		if !tr.Available {
 			continue
@@ -266,7 +269,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 				ch <- prometheus.MustNewConstMetric(c.sessions, prometheus.GaugeValue, 0,
 					tool, string(window))
 			}
-			if _, ok := snap.ToolCalls[scope]; !ok {
+			if _, ok := snap.ToolCalls[scope]; !ok && reportsToolCalls[tool] {
 				ch <- prometheus.MustNewConstMetric(c.toolCalls, prometheus.GaugeValue, 0,
 					tool, string(window))
 			}

@@ -140,17 +140,20 @@ reconciliar.
 - **Significado:** número de invocaciones de herramientas (tool calls, en el
   sentido de function/tool calling del modelo) registradas por `tool` dentro
   de la ventana `window`.
-- Para cada provider disponible, se materializa una serie para cada ventana
-  soportada; `0` significa que el escaneo sano no encontró tool calls en esa
-  ventana. No se emite serie para un provider no disponible.
+- Para cada provider disponible que ya reportó tool calls en alguna ventana,
+  se materializa una serie para cada ventana soportada; `0` significa que el
+  escaneo sano no encontró tool calls en esa ventana. No se emite serie para
+  un provider no disponible ni para uno cuyo formato no reporta tool calls.
 
 ## Contrato de ceros y monitorización viva
 
 La materialización de ceros depende de si el conjunto de labels está cerrado:
 
-1. `ai_usage_sessions` y `ai_usage_tool_calls` solo llevan `tool` y `window`,
-   conjuntos enumerables; cada provider disponible publica las seis ventanas,
-   por lo que la ausencia de eventos se representa como `0`.
+1. `ai_usage_sessions` solo lleva `tool` y `window`, conjuntos enumerables;
+   cada provider disponible publica las seis ventanas, por lo que la ausencia
+   de eventos se representa como `0`. `ai_usage_tool_calls` aplica lo mismo
+   únicamente a tools que ya reportaron tool calls: un formato que no puede
+   contarlos permanece ausente, porque desconocido no es cero.
 2. `ai_usage_tokens` y `ai_usage_cost_usd` incluyen `model` (y tokens además
    `token_type`), conjuntos abiertos; solo se publican si hubo consumo medido.
    No se inventan modelos, clases o costes a cero.
