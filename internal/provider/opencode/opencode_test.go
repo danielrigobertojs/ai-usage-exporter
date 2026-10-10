@@ -91,6 +91,7 @@ func TestParseEmitsOnlyAssistantMessages(t *testing.T) {
 		model     string
 		projectID string
 		tokens    map[model.TokenClass]int64
+		toolCalls int64
 	}{
 		"msg_1": { // opencode/nemotron-3-super-free, additive reasoning>0.
 			sessionID: "ses_alpha", model: "nemotron-3-super-free", projectID: "/home/user/projects/alpha",
@@ -98,6 +99,7 @@ func TestParseEmitsOnlyAssistantMessages(t *testing.T) {
 				model.TokenInput: 95189, model.TokenOutput: 934,
 				model.TokenCacheRead: 0, model.TokenCacheWrite: 0, model.TokenReasoning: 460,
 			},
+			toolCalls: 2,
 		},
 		"msg_2": { // opencode-go/kimi-k2.5, nested: Output = 33 - 22 = 11.
 			sessionID: "ses_alpha", model: "kimi-k2.5", projectID: "/home/user/projects/alpha",
@@ -105,6 +107,7 @@ func TestParseEmitsOnlyAssistantMessages(t *testing.T) {
 				model.TokenInput: 9495, model.TokenOutput: 11,
 				model.TokenCacheRead: 256, model.TokenCacheWrite: 0, model.TokenReasoning: 22,
 			},
+			toolCalls: 1,
 		},
 		"msg_3": { // no tokens.total at all; defaults to additive (no-op).
 			sessionID: "ses_beta", model: "moonshotai/kimi-k2:free", projectID: "/home/user/projects/beta",
@@ -112,6 +115,7 @@ func TestParseEmitsOnlyAssistantMessages(t *testing.T) {
 				model.TokenInput: 0, model.TokenOutput: 0,
 				model.TokenCacheRead: 0, model.TokenCacheWrite: 0, model.TokenReasoning: 0,
 			},
+			toolCalls: 0,
 		},
 		"msg_4": { // tokens.cache missing entirely; schema tolerance.
 			sessionID: "ses_beta", model: "claude-sonnet-4-5", projectID: "/home/user/projects/beta",
@@ -119,6 +123,7 @@ func TestParseEmitsOnlyAssistantMessages(t *testing.T) {
 				model.TokenInput: 200, model.TokenOutput: 75,
 				model.TokenCacheRead: 0, model.TokenCacheWrite: 0, model.TokenReasoning: 0,
 			},
+			toolCalls: 0,
 		},
 		"msg_7": { // opencode-go/kimi-k2.5, nested with reasoning(88) > output(85): clamped to 0.
 			sessionID: "ses_alpha", model: "kimi-k2.5", projectID: "/home/user/projects/alpha",
@@ -126,6 +131,7 @@ func TestParseEmitsOnlyAssistantMessages(t *testing.T) {
 				model.TokenInput: 7289, model.TokenOutput: 0,
 				model.TokenCacheRead: 86784, model.TokenCacheWrite: 0, model.TokenReasoning: 88,
 			},
+			toolCalls: 0,
 		},
 	}
 
@@ -159,6 +165,26 @@ func TestParseEmitsOnlyAssistantMessages(t *testing.T) {
 				t.Errorf("%s: Tokens[%s] = %d, want %d", id, class, got, wantCount)
 			}
 		}
+		if e.ToolCalls != w.toolCalls {
+			t.Errorf("%s: ToolCalls = %d, want %d", id, e.ToolCalls, w.toolCalls)
+		}
+	}
+}
+
+// TestToolCallCapabilityMatchesParse prevents Descriptor from promising a
+// capability Parse does not actually provide. The fixture has tool, text,
+// reasoning, and orphan-tool parts; only attached tool parts contribute.
+func TestToolCallCapabilityMatchesParse(t *testing.T) {
+	if !New().Descriptor().Capabilities.HasToolCalls {
+		t.Fatal("Descriptor().Capabilities.HasToolCalls = false, want true because Parse counts part.type=tool")
+	}
+
+	var total int64
+	for _, event := range parseAll(t, buildFixture(t)) {
+		total += event.ToolCalls
+	}
+	if total != 3 {
+		t.Errorf("sum of ToolCalls = %d, want 3", total)
 	}
 }
 

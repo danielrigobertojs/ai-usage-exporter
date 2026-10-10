@@ -35,6 +35,16 @@ type Message struct {
 	Data      string
 }
 
+// Part describes one fixture row for OpenCode's `part` table. Type is held
+// inside Data, as it is in the real schema. Its payload is intentionally not
+// modeled because the provider only needs that discriminator to count calls.
+type Part struct {
+	ID        string
+	MessageID string
+	SessionID string
+	Data      string
+}
+
 // DefaultSessions and DefaultMessages are redacted extracts of real
 // opencode.db rows (JCB-322): path.cwd, path.root and summary content are
 // replaced with "REDACTED", but role, modelID, providerID, time.created,
@@ -115,6 +125,18 @@ var DefaultMessages = []Message{
 	},
 }
 
+// DefaultParts is a redacted extract of real part rows. It covers tool,
+// text, and reasoning parts plus a tool part whose message no longer exists;
+// only tool parts attached to an emitted assistant message count.
+var DefaultParts = []Part{
+	{ID: "part_1", MessageID: "msg_1", SessionID: "ses_alpha", Data: `{"type":"tool","callID":"REDACTED","tool":"REDACTED","state":{"status":"completed"}}`},
+	{ID: "part_2", MessageID: "msg_1", SessionID: "ses_alpha", Data: `{"type":"tool","callID":"REDACTED","tool":"REDACTED","state":{"status":"completed"}}`},
+	{ID: "part_3", MessageID: "msg_1", SessionID: "ses_alpha", Data: `{"type":"text","text":"REDACTED"}`},
+	{ID: "part_4", MessageID: "msg_2", SessionID: "ses_alpha", Data: `{"type":"reasoning","text":"REDACTED"}`},
+	{ID: "part_5", MessageID: "msg_2", SessionID: "ses_alpha", Data: `{"type":"tool","callID":"REDACTED","tool":"REDACTED","state":{"status":"completed"}}`},
+	{ID: "part_orphan", MessageID: "missing_message", SessionID: "ses_beta", Data: `{"type":"tool","callID":"REDACTED","tool":"REDACTED","state":{"status":"completed"}}`},
+}
+
 // Build creates opencode.db under dir with the `session` and `message`
 // tables populated from sessions and messages, and returns its full path.
 //
@@ -127,6 +149,11 @@ var DefaultMessages = []Message{
 // role column that does not exist. If this schema ever grows a role
 // column again, it has drifted from reality the same way.
 func Build(dir string, sessions []Session, messages []Message) (string, error) {
+	return BuildWithParts(dir, sessions, messages, DefaultParts)
+}
+
+// BuildWithParts creates the fixture with explicitly supplied part rows.
+func BuildWithParts(dir string, sessions []Session, messages []Message, parts []Part) (string, error) {
 	path := filepath.Join(dir, "opencode.db")
 
 	db, err := sql.Open("sqlite", "file:"+path)
@@ -148,7 +175,16 @@ func Build(dir string, sessions []Session, messages []Message) (string, error) {
 		"\t`data` text NOT NULL,\n" +
 		"\tCONSTRAINT `fk_message_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n" +
 		");\n" +
-		"CREATE INDEX `message_session_time_created_id_idx` ON `message` (`session_id`,`time_created`,`id`);"
+		"CREATE INDEX `message_session_time_created_id_idx` ON `message` (`session_id`,`time_created`,`id`);" +
+		"CREATE TABLE `part` (\n" +
+		"\t`id` text PRIMARY KEY,\n" +
+		"\t`message_id` text NOT NULL,\n" +
+		"\t`session_id` text NOT NULL,\n" +
+		"\t`time_created` integer NOT NULL,\n" +
+		"\t`time_updated` integer NOT NULL,\n" +
+		"\t`data` text NOT NULL\n" +
+		");\n" +
+		"CREATE INDEX `part_message_id_idx` ON `part` (`message_id`);"
 	if _, err := db.Exec(schema); err != nil {
 		return "", fmt.Errorf("testdata: create schema: %w", err)
 	}
@@ -164,6 +200,14 @@ func Build(dir string, sessions []Session, messages []Message) (string, error) {
 			m.ID, m.SessionID, m.Data,
 		); err != nil {
 			return "", fmt.Errorf("testdata: insert message %s: %w", m.ID, err)
+		}
+	}
+	for _, p := range parts {
+		if _, err := db.Exec(
+			`INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, 0, 0, ?)`,
+			p.ID, p.MessageID, p.SessionID, p.Data,
+		); err != nil {
+			return "", fmt.Errorf("testdata: insert part %s: %w", p.ID, err)
 		}
 	}
 
