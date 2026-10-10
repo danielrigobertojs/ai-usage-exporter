@@ -10,6 +10,7 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -35,6 +36,7 @@ func New(cfg config.Config, c *collector.Collector, ready func() bool) *http.Ser
 	mux := http.NewServeMux()
 	metrics := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
 	mux.Handle(cfg.MetricsPath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		slog.Debug("metrics scrape served", "method", r.Method)
 		metrics.ServeHTTP(w, r)
 	}))
@@ -50,7 +52,12 @@ func New(cfg config.Config, c *collector.Collector, ready func() bool) *http.Ser
 	})
 
 	return &http.Server{
-		Addr:    cfg.Listen,
-		Handler: mux,
+		Addr:              cfg.Listen,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    8 << 10,
 	}
 }

@@ -69,6 +69,26 @@ func TestMetricsPathIsConfigurable(t *testing.T) {
 	}
 }
 
+func TestServerPrivacyAndResourceLimits(t *testing.T) {
+	c := collector.New(pricing.Embedded(), collector.Options{})
+	c.Set(scan.Result{})
+	srv := New(testConfig(), c, c.Ready)
+	if srv.ReadTimeout == 0 || srv.WriteTimeout == 0 || srv.ReadHeaderTimeout == 0 || srv.MaxHeaderBytes == 0 {
+		t.Fatalf("server safety limits are incomplete: %+v", srv)
+	}
+	ts := httptest.NewServer(srv.Handler)
+	defer ts.Close()
+	resp, err := http.Get(ts.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("GET /metrics: %v", err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+	assertStatus(t, ts.URL+"/debug/pprof/", http.StatusNotFound)
+}
+
 // TestMetricsOnlyExposesTheContractNamespace covers the acceptance
 // criterion that /metrics returns the 11 ai_usage_* metrics and nothing
 // else - no Go runtime or process collector output, since New registers c
