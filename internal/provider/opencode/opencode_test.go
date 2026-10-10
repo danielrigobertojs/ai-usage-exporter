@@ -400,8 +400,19 @@ func TestParseNonexistentPath(t *testing.T) {
 	if err == nil {
 		t.Fatal("Parse on a nonexistent path: want error, got nil")
 	}
-	if !strings.Contains(err.Error(), "opencode:") {
+	if !strings.Contains(err.Error(), "provider=opencode") {
 		t.Errorf("Parse error = %q, want it to identify the opencode provider", err.Error())
+	}
+}
+
+func TestParseErrorDoesNotLeakSourcePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SENTINEL-PROMPT-TEXT", "opencode.db")
+	err := New().Parse(context.Background(), provider.Source{Path: path, Kind: provider.SourceSQLite}, func(model.UsageEvent) error { return nil })
+	if err == nil {
+		t.Fatal("Parse: want query error")
+	}
+	if strings.Contains(err.Error(), "SENTINEL-PROMPT-TEXT") || strings.Contains(err.Error(), path) {
+		t.Errorf("Parse error leaked source path: %q", err)
 	}
 }
 

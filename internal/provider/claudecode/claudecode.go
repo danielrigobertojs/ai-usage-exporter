@@ -16,7 +16,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -24,6 +23,7 @@ import (
 	"time"
 
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/model"
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/privacy"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider"
 )
 
@@ -97,12 +97,13 @@ type contentBlock struct {
 func (claudeCode) Parse(ctx context.Context, src provider.Source, emit func(model.UsageEvent) error) error {
 	f, err := os.Open(src.Path)
 	if err != nil {
-		return fmt.Errorf("claudecode: open %s: %w", src.Path, err)
+		return privacy.Err(toolID, filepath.Base(src.Path), 0, err)
 	}
 	defer f.Close()
 
 	fallbackSession := sessionIDFromPath(src.Path)
 	br := bufio.NewReaderSize(f, 64<<10)
+	lineNumber := 0
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -111,6 +112,7 @@ func (claudeCode) Parse(ctx context.Context, src provider.Source, emit func(mode
 
 		line, rerr := provider.ReadJSONLLine(br)
 		if line != nil {
+			lineNumber++
 			if err := parseAndEmit(line, fallbackSession, src.Path, emit); err != nil {
 				return err
 			}
@@ -119,7 +121,7 @@ func (claudeCode) Parse(ctx context.Context, src provider.Source, emit func(mode
 			if rerr == io.EOF {
 				return nil
 			}
-			return fmt.Errorf("claudecode: read %s: %w", src.Path, rerr)
+			return privacy.Err(toolID, filepath.Base(src.Path), lineNumber+1, rerr)
 		}
 	}
 }

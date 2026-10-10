@@ -20,12 +20,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
+	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/model"
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/privacy"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider"
 )
 
@@ -142,13 +143,13 @@ func (d messageData) reasoningNested() bool {
 func (openCodeProvider) Parse(ctx context.Context, src provider.Source, emit func(model.UsageEvent) error) error {
 	db, err := sql.Open("sqlite", DSN(src.Path))
 	if err != nil {
-		return fmt.Errorf("opencode: open %s: %w", src.Path, err)
+		return privacy.Err(toolID, filepath.Base(src.Path), 0, err)
 	}
 	defer db.Close()
 
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		return fmt.Errorf("opencode: query %s: %w", src.Path, err)
+		return privacy.Err(toolID, filepath.Base(src.Path), 0, err)
 	}
 	defer rows.Close()
 
@@ -159,7 +160,7 @@ func (openCodeProvider) Parse(ctx context.Context, src provider.Source, emit fun
 
 		var id, sessionID, data, directory string
 		if err := rows.Scan(&id, &sessionID, &data, &directory); err != nil {
-			return fmt.Errorf("opencode: scan %s: %w", src.Path, err)
+			return privacy.Err(toolID, filepath.Base(src.Path), 0, err)
 		}
 
 		var md messageData
@@ -197,7 +198,7 @@ func (openCodeProvider) Parse(ctx context.Context, src provider.Source, emit fun
 	}
 
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("opencode: iterate %s: %w", src.Path, err)
+		return privacy.Err(toolID, filepath.Base(src.Path), 0, err)
 	}
 	return nil
 }

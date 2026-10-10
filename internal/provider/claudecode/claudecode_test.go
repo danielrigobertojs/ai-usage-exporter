@@ -229,6 +229,9 @@ func TestParseReturnsErrorWhenSourceCannotBeOpened(t *testing.T) {
 	if err == nil {
 		t.Fatal("Parse: want error for a missing source file, got nil")
 	}
+	if strings.Contains(err.Error(), "SENTINEL-PROMPT-TEXT") || strings.Contains(err.Error(), path) {
+		t.Errorf("Parse error leaked source path: %q", err)
+	}
 }
 
 func TestProjectIDFallsBackToSessionFileParentDirWhenCWDMissing(t *testing.T) {

@@ -246,6 +246,17 @@ func TestParseContextCanceled(t *testing.T) {
 	}
 }
 
+func TestParseErrorDoesNotLeakSourcePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SENTINEL-PROMPT-TEXT", "rollout.jsonl")
+	err := New().Parse(context.Background(), provider.Source{Path: path}, func(model.UsageEvent) error { return nil })
+	if err == nil {
+		t.Fatal("Parse: want open error")
+	}
+	if strings.Contains(err.Error(), "SENTINEL-PROMPT-TEXT") || strings.Contains(err.Error(), path) {
+		t.Errorf("Parse error leaked source path: %q", err)
+	}
+}
+
 // TestParseNeverLeaksContent injects SENTINEL-PROMPT-TEXT into every
 // free-text field a Codex rollout line carries that this parser does NOT
 // decode (session_meta.cwd, turn_context.cwd, response_item.name,

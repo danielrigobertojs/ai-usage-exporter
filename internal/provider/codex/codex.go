@@ -12,7 +12,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,6 +20,7 @@ import (
 	"time"
 
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/model"
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/privacy"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider"
 )
 
@@ -144,7 +144,7 @@ func (codexProvider) Parse(ctx context.Context, src provider.Source, emit func(m
 
 	f, err := os.Open(src.Path)
 	if err != nil {
-		return fmt.Errorf("codex: open %s: %w", src.Path, err)
+		return privacy.Err(toolID, filepath.Base(src.Path), 0, err)
 	}
 	defer f.Close()
 
@@ -152,6 +152,7 @@ func (codexProvider) Parse(ctx context.Context, src provider.Source, emit func(m
 	currentModel := ""
 	pendingToolCalls := int64(0)
 	tokenCountIndex := 0
+	lineNumber := 0
 
 	br := bufio.NewReaderSize(f, 64<<10)
 	tracker := NewTracker()
@@ -163,6 +164,7 @@ func (codexProvider) Parse(ctx context.Context, src provider.Source, emit func(m
 
 		line, rerr := provider.ReadJSONLLine(br)
 		if line != nil {
+			lineNumber++
 			var rl rolloutLine
 			if err := json.Unmarshal(line, &rl); err == nil {
 				switch rl.Type {
@@ -252,7 +254,7 @@ func (codexProvider) Parse(ctx context.Context, src provider.Source, emit func(m
 			if rerr == io.EOF {
 				return nil
 			}
-			return fmt.Errorf("codex: read %s: %w", src.Path, rerr)
+			return privacy.Err(toolID, filepath.Base(src.Path), lineNumber+1, rerr)
 		}
 	}
 }
