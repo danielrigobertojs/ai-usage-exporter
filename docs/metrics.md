@@ -159,7 +159,7 @@ La materialización de ceros depende de si el conjunto de labels está cerrado:
    No se inventan modelos, clases o costes a cero.
 3. Los paneles de la fila "Ahora" convierten la ausencia agregada a cero con
    `or vector(0)` y completan el gráfico por herramienta con
-   `or (0 * ai_usage_provider_available)`.
+   `or (0 * max by (tool) (ai_usage_provider_available))`.
 4. La ausencia de datos no es una alerta de consumo: alertas de disponibilidad
    o frescura deben consultar `ai_usage_provider_available` y
    `ai_usage_scan_timestamp_seconds`, no la presencia de series de tokens.

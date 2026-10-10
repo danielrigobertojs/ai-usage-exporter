@@ -95,7 +95,7 @@
       "description": "Tokens de la ventana 1h por herramienta a lo largo del tiempo. Incluye cero para providers disponibles sin consumo medido; la disponibilidad y la frescura son las señales de fallo. Nunca aplicar rate() ni increase() a esta gauge.",
       "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
-      "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "$datasource" }, "expr": "sum by (tool) (ai_usage_tokens{window=\"1h\"}) or (0 * ai_usage_provider_available)", "legendFormat": "{{tool}}", "instant": false }],
+      "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "$datasource" }, "expr": "sum by (tool) (ai_usage_tokens{window=\"1h\"}) or (0 * max by (tool) (ai_usage_provider_available))", "legendFormat": "{{tool}}", "instant": false }],
       "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
       "options": {}
     },

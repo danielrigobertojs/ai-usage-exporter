@@ -155,7 +155,7 @@ func TestLivePanelsRepresentEmptyUsageAsZero(t *testing.T) {
 	want := map[string]string{
 		"Ahora: tokens (1h)":       "sum(ai_usage_tokens{window=\"1h\"}) or vector(0)",
 		"Ahora: coste (1h)":        "sum(ai_usage_cost_usd{window=\"1h\"}) or vector(0)",
-		"Ahora: uso continuo (1h)": "sum by (tool) (ai_usage_tokens{window=\"1h\"}) or (0 * ai_usage_provider_available)",
+		"Ahora: uso continuo (1h)": "sum by (tool) (ai_usage_tokens{window=\"1h\"}) or (0 * max by (tool) (ai_usage_provider_available))",
 	}
 	for _, p := range flattenPanels(d.Panels) {
 		expr, ok := want[p.Title]
