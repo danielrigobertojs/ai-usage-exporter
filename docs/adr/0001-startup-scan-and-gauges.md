@@ -1,142 +1,138 @@
-# ADR-001: Parseo al arranque y gauges en lugar de counters
+# ADR-001: Startup scans and gauges instead of counters
 
-- Fecha: 2026-10-02
-- Estado: Aceptado
-- Revisión: reconsiderar si se necesita continuidad de serie entre reinicios (ver "Condición de reapertura")
+- Date: 2026-10-02
+- Status: Accepted
+- Review: reconsider if continuity of the time series across restarts is needed (see "Reopening condition")
 
-## Enmienda 2026-10-08 — reescaneo activo por defecto
+## Amendment 2026-10-08 — live rescanning enabled by default
 
-JCB-328 cambia el default de `scan_interval` de `0` a `60s`. No añade estado
-persistente, offsets ni acumulación entre escaneos: cada iteración vuelve a
-leer el historial disponible completo y reemplaza el snapshot con una foto
-nueva. Por ello un reinicio sigue pudiendo producir un salto y esta enmienda
-no satisface ni adelanta la condición de reapertura de continuidad de serie o
-retención histórica.
+JCB-328 changes the default `scan_interval` from `0` to `60s`. It does not add
+persistent state, offsets, or accumulation between scans: each iteration reads
+the complete available history again and replaces the snapshot with a new one.
+Consequently, a restart can still cause a discontinuity, and this amendment
+neither satisfies nor brings forward the reopening condition for time-series
+continuity or historical retention.
 
-La evidencia que justifica la nueva cadencia es una medición del 2026-10-08
-en macOS arm64 con Go 1.27.1 y `CGO_ENABLED=0`: después de calentar caché, el
-escaneo de 40 JSONL de Claude Code, 276 JSONL de Codex y una SQLite de
-OpenCode de 2,7 GB tardó 0,68 s. Un escaneo cada 60 s ocupa aproximadamente
-1,1 % del ciclo; un watcher incremental ahorraría poco a cambio de introducir
-estado que esta decisión rechaza. `scan_interval: 0` sigue siendo válido para
-quien necesite un snapshot congelado.
+The evidence supporting the new cadence is a 2026-10-08 measurement on macOS
+arm64 with Go 1.27.1 and `CGO_ENABLED=0`: after warming the cache, scanning 40
+Claude Code JSONL files, 276 Codex JSONL files, and a 2.7 GB OpenCode SQLite
+database took 0.68 s. A scan every 60 s occupies approximately 1.1% of the
+cycle; an incremental watcher would save little while adding state that this
+decision rejects. `scan_interval: 0` remains valid for users who need a frozen
+snapshot.
 
-## Contexto
+## Context
 
-`ai-usage-exporter` lee los logs locales de agentes de IA (Claude Code, Codex CLI,
-OpenCode, y en el futuro otros) y expone métricas de uso en un endpoint `/metrics`
-para que Prometheus las scrapee.
+`ai-usage-exporter` reads the local logs of AI agents (Claude Code, Codex CLI,
+OpenCode, and others in the future) and exposes usage metrics at a `/metrics`
+endpoint for Prometheus to scrape.
 
-Esos logs no son un stream continuo que el exporter pueda seguir con un offset
-incremental de forma simple y uniforme entre proveedores: son JSONL que crecen,
-bases SQLite en modo WAL, y en el caso de Claude Code, un directorio que
-**autoborra entradas a los 30 días**. Un mensaje puede además reaparecer por
-compactación, `/resume` o forks de sesión (ver la invariante de deduplicación
-por id de mensaje).
+Those logs are not a continuous stream that the exporter can follow simply and
+consistently with an incremental offset across providers: they are growing
+JSONL files, SQLite databases in WAL mode, and, for Claude Code, a directory
+that **automatically deletes entries after 30 days**. A message can also
+reappear because of compaction, `/resume`, or session forks (see the message-ID
+deduplication invariant).
 
-Dado ese sustrato, hay dos decisiones de diseño encadenadas que hay que fijar
-antes de escribir cualquier provider:
+Given that substrate, two related design decisions must be made before writing
+any provider:
 
-1. ¿Cuándo se leen los logs: una vez al arrancar, o en un bucle continuo con
-   estado persistente entre lecturas?
-2. ¿Qué tipo de métrica de Prometheus modela "tokens usados en la ventana de
-   7 días": un counter monotónico, o un gauge recalculado en cada scan?
+1. When should logs be read: once at startup, or continuously with persistent
+   state between reads?
+2. Which Prometheus metric type models "tokens used in the 7-day window": a
+   monotonic counter, or a gauge recalculated at each scan?
 
-## Decisión
+## Decision
 
-**El binario parsea los logs completos al arrancar y, por defecto, cada 60
-segundos.** No hay watcher de filesystem ni estado agregado persistido entre
-arranques (ni en disco ni en una base propia). Cada reescaneo completo
-reemplaza el snapshot servido en `/metrics`.
+**The binary parses the complete logs at startup and, by default, every 60
+seconds.** There is no filesystem watcher or persisted aggregate state between
+starts (neither on disk nor in its own database). Each complete rescan replaces
+the snapshot served at `/metrics`.
 
-**Todas las series de uso se exponen como gauges agregados por ventana**
-(`1h`, `24h`, `7d`, `30d`, `mtd`, `all`), calculados en el momento del escaneo a
-partir del historial completo disponible en disco — nunca como counters con
-sufijo `_total`. Se añaden gauges de frescura (`ai_usage_scan_timestamp_seconds`,
-`ai_usage_last_event_timestamp_seconds`) para que el operador pueda saber qué
-tan viejo es el snapshot servido.
+**All usage series are exposed as gauges aggregated by window** (`1h`, `24h`,
+`7d`, `30d`, `mtd`, `all`), calculated at scan time from the complete history
+available on disk — never as counters with a `_total` suffix. Freshness gauges
+(`ai_usage_scan_timestamp_seconds`, `ai_usage_last_event_timestamp_seconds`)
+let the operator determine how old the served snapshot is.
 
-### Por qué un counter es el modelo equivocado aquí
+### Why a counter is the wrong model here
 
-Un counter de Prometheus solo es válido si Prometheus puede asumir que, salvo
-reinicio del proceso que lo expone, **nunca baja**. `rate()` y `increase()`
-dependen de esa invariante para detectar resets.
+A Prometheus counter is valid only if Prometheus can assume that, except for a
+restart of the process exposing it, it **never decreases**. `rate()` and
+`increase()` rely on that invariant to detect resets.
 
-Aquí esa invariante no se sostiene incluso dentro de la vida de un solo
-proceso en ejecución continua, porque el proceso no vuelve a escanear — pero
-sí se rompe de forma garantizada **entre** arranques: si el exporter se
-reinicia (deploy, crash, restart de contenedor) y Claude Code ya purgó JSONL
-de hace más de 30 días, el total re-derivado del historial en disco en el
-segundo arranque puede ser **menor** que el que se sirvió justo antes de
-reiniciar. Prometheus interpretaría esa caída como un reset de counter
-(correcto para un proceso que reinició su contador interno a cero, incorrecto
-para uno que remide un historial parcialmente podado) y `rate()` produciría
-picos espurios o valores negativos saneados a cero, es decir, basura.
+That invariant does not hold here even within the lifetime of a continuously
+running process, because the process does not rescan — but it is guaranteed to
+break **between** starts: if the exporter restarts (deployment, crash, or
+container restart) after Claude Code has purged JSONL files older than 30 days,
+the total re-derived from the on-disk history at the second startup may be
+**lower** than the total served just before the restart. Prometheus would
+interpret that decrease as a counter reset (correct for a process that reset
+its internal counter to zero, but incorrect for one that remeasures a partly
+pruned history), and `rate()` would produce spurious spikes or negative values
+clamped to zero — in other words, garbage.
 
-Un gauge no tiene ese problema: "el total de tokens de la ventana `7d` según
-el historial local en el momento de este escaneo" es una afirmación verdadera
-en cada arranque, incluso si el historial que la sustenta cambió entre un
-arranque y el siguiente. Un gauge nunca promete monotonicidad, así que no hay
-contrato que romper.
+A gauge has no such problem: "the total tokens in the `7d` window according to
+the local history at the time of this scan" is true at every startup, even if
+the history supporting it changed between one start and the next. A gauge never
+promises monotonicity, so there is no contract to break.
 
-## Alternativas descartadas
+## Rejected alternatives
 
-**Counters + estado persistente en SQLite propio (store agregado del
-exporter).** Permitiría acumular un total verdaderamente monotónico
-independiente de la purga de los logs fuente, y sería el diseño correcto si
-se necesitara continuidad de serie histórica más allá de lo que los logs
-crudos retienen. Se descarta para este proyecto porque:
+**Counters plus persistent state in the exporter's own SQLite store.** This
+would make it possible to accumulate a genuinely monotonic total independently
+of purging source logs, and it would be the correct design if time-series
+continuity beyond the raw logs' retention were needed. It is rejected for this
+project because:
 
-- Introduce estado mutable que el exporter debe mantener consistente con una
-  fuente que él no controla (los logs de cada agente), con todos los modos de
-  fallo de una migración o corrupción de ese store.
-- Contradice el invariante de lectura no destructiva y de simplicidad: el
-  exporter deja de ser "snapshot sin estado" y pasa a ser un sistema con su
-  propia base de datos que hay que operar, respaldar y versionar.
-- No hay un requisito de producto hoy que necesite series históricas más
-  allá de lo que los propios logs retienen (`all` ya cubre "todo lo que el
-  historial local todavía tiene").
+- It introduces mutable state that the exporter must keep consistent with a
+  source it does not control (each agent's logs), including every migration or
+  corruption failure mode of that store.
+- It contradicts the non-destructive-reading and simplicity invariant: the
+  exporter stops being a "stateless snapshot" and becomes a system with its
+  own database to operate, back up, and version.
+- There is currently no product requirement for historical series beyond what
+  the logs themselves retain (`all` already covers "everything the local
+  history still contains").
 
-## Consecuencias
+## Consequences
 
-- Los dashboards de Grafana que consuman estas métricas deben usar los
-  gauges directamente (`ai_usage_tokens{window="7d"}`) y no `rate()` /
-  `increase()` sobre ellos — son snapshots, no acumuladores.
-- Un reinicio del proceso hace que el `/metrics` servido cambie de golpe al
-  nuevo snapshot; no hay transición suave ni interpolación.
-- El dato más viejo que `/metrics` puede reflejar es exactamente lo que el
-  log fuente todavía conserva en disco en el momento del escaneo — si Claude
-  Code ya autoborró una sesión, esa sesión ya no existe para ninguna ventana,
-  incluyendo `all`.
-- Los providers deben deduplicar por id de mensaje al construir el snapshot
-  (no por línea de log), para que la compactación y los forks de sesión no
-  inflen los totales de una sola pasada de parseo.
-- El snapshot se refresca con un escaneo completo cada 60 segundos por
-  defecto. Configurar `scan_interval: 0` conserva el comportamiento de
-  snapshot congelado; `SIGHUP` solicita un reescaneo adicional.
+- Grafana dashboards that consume these metrics must use gauges directly
+  (`ai_usage_tokens{window="7d"}`), not `rate()` or `increase()` over them —
+  they are snapshots, not accumulators.
+- Restarting the process makes the served `/metrics` change immediately to the
+  new snapshot; there is no smooth transition or interpolation.
+- The oldest data that `/metrics` can reflect is exactly what the source log
+  still retains on disk at scan time. If Claude Code has already deleted a
+  session, that session no longer exists for any window, including `all`.
+- Providers must deduplicate by message ID when building the snapshot (not by
+  log line), so compaction and forks do not inflate totals in one parsing pass.
+- The snapshot refreshes with a complete scan every 60 seconds by default.
+  Setting `scan_interval: 0` preserves frozen-snapshot behavior; `SIGHUP`
+  requests an additional rescan.
 
-### Mecanismo de refresco: SIGHUP y `scan_interval`
+### Refresh mechanism: SIGHUP and `scan_interval`
 
-JCB-314 añade un disparador de reescaneo y JCB-328 cambia la cadencia por
-defecto a un escaneo cada 60 segundos, sin contradecir la decisión de arriba:
-cada ejecución sigue siendo una foto completa y sin estado. Dos formas de
-solicitar un escaneo adicional son:
+JCB-314 adds a rescan trigger and JCB-328 changes the default cadence to a
+full scan every 60 seconds without contradicting the decision above: every
+execution remains a complete, stateless snapshot. There are two ways to
+request an additional scan:
 
-- Enviar `SIGHUP` al proceso en ejecución.
-- Configurar `scan_interval`; su default es `60s` y `0` desactiva el ticker.
+- Send `SIGHUP` to the running process.
+- Configure `scan_interval`; its default is `60s`, and `0` disables the ticker.
 
-Cada disparo vuelve a correr `scan.Run` completo y reemplaza el snapshot
-publicado — no hay estado incremental ni offset entre escaneos, igual que en
-el arranque. Un disparo que llega mientras un escaneo ya está en curso se
-descarta, nunca se encola: una ráfaga de señales durante un escaneo lento
-colapsa a, como mucho, un reescaneo extra, no uno por señal. Esto no reabre
-la decisión del gauge: cada reescaneo sigue siendo una foto completa del
-historial disponible en ese instante, nunca un acumulador entre escaneos.
+Each trigger runs the full `scan.Run` again and replaces the published
+snapshot — there is no incremental state or offset between scans, just as at
+startup. A trigger received while a scan is already in progress is discarded,
+never queued: a burst of signals during a slow scan collapses to at most one
+additional rescan, not one per signal. This does not reopen the gauge decision:
+each rescan remains a complete snapshot of the history available at that
+instant, never an accumulator across scans.
 
-## Condición de reapertura
+## Reopening condition
 
-Reabrir esta decisión si aparece un requisito real de continuidad de serie
-entre reinicios (por ejemplo, alertas basadas en tendencia que no toleren el
-salto de un reinicio, o la necesidad de retener históricos más allá de lo que
-los logs fuente conservan) **y** el equipo acepta el coste operativo de un
-store propio descrito arriba.
+Reopen this decision if a real requirement appears for time-series continuity
+across restarts (for example, trend-based alerts that cannot tolerate a restart
+discontinuity, or a need to retain history beyond what source logs preserve)
+**and** the team accepts the operational cost of the dedicated store described
+above.

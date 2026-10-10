@@ -20,8 +20,7 @@ JSONL content are never logged.
 | Skipped input, exhausted budget, parse degradation | INFO/WARN | aggregate reason or safe error type |
 | Discovery or rescan failure | ERROR | safe error type |
 
-Ejemplo de una ejecución real (la marca de tiempo, duración e identificador
-varían):
+Example of a real run (the timestamp, duration, and identifier vary):
 
 ```text
 time=2026-10-09T11:47:28.465-06:00 level=INFO msg="scan started" scan_id=6f2c4d19f3a4 providers=3
