@@ -69,7 +69,7 @@
     {
       "id": 8,
       "type": "stat",
-      "title": "Ahora: tokens (1h)",
+      "title": "Now: tokens (1h)",
       "description": "Total de tokens consumidos en la última hora. Muestra 0 cuando ningún modelo tuvo consumo medido; esta ventana corta se re-deriva del historial completo en cada escaneo y es una gauge, no un counter.",
       "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
@@ -80,7 +80,7 @@
     {
       "id": 9,
       "type": "stat",
-      "title": "Ahora: coste (1h)",
+      "title": "Now: cost (1h)",
       "description": "Coste estimado acumulado en la última hora, calculado con el catálogo de precios vigente en el último escaneo completo. Muestra 0 cuando ningún modelo tuvo consumo medido.",
       "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
@@ -91,7 +91,7 @@
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Ahora: uso continuo (1h)",
+      "title": "Now: live usage (1h)",
       "description": "Tokens de la ventana 1h por herramienta a lo largo del tiempo. Incluye cero para providers disponibles sin consumo medido; la disponibilidad y la frescura son las señales de fallo. Nunca aplicar rate() ni increase() a esta gauge.",
       "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
@@ -102,7 +102,7 @@
     {
       "id": 11,
       "type": "stat",
-      "title": "Ahora: frescura del escaneo",
+      "title": "Now: scan freshness",
       "description": "Segundos desde el último escaneo completo. Verde por debajo del intervalo por defecto de 60 s; amarillo o rojo indican que el reescaneo se retrasa o falla.",
       "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
@@ -113,7 +113,7 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "Fila de estado",
+      "title": "Status row",
       "description": "Tres cifras de estado para la ventana $window: tokens totales, coste estimado y sesiones distintas. Cada una es una gauge agregada desde el historial local en el último escaneo completo.",
       "gridPos": { "h": 4, "w": 24, "x": 0, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
@@ -167,7 +167,7 @@
     {
       "id": 2,
       "type": "barchart",
-      "title": "Tokens por herramienta",
+      "title": "Tokens by tool",
       "description": "Tokens totales de la ventana $window agregados por tool, sin distinguir modelo ni clase de token. Es una gauge agregada por ventana (ADR-001), no un counter: no aplicar rate() ni increase() sobre esta serie.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
@@ -187,7 +187,7 @@
     {
       "id": 3,
       "type": "barchart",
-      "title": "Coste por modelo",
+      "title": "Cost by model",
       "description": "Coste estimado en USD de la ventana $window agregado por model, ordenado de mayor a menor. Derivado del catálogo de precios vigente al momento del escaneo, no del coste nativo que algún provider pueda reportar (docs/metrics.md, 'Reconciliación con el coste nativo').",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
@@ -210,7 +210,7 @@
     {
       "id": 4,
       "type": "piechart",
-      "title": "Reparto por clase de token",
+      "title": "Token-class distribution",
       "description": "Tokens de la ventana $window repartidos por token_type (input, output, cache_read, cache_write, reasoning). Las cinco clases son disjuntas por contrato (docs/metrics.md): esta dona es la forma más directa de ver cuánto del consumo ya se está ahorrando vía caché.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
@@ -230,7 +230,7 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Tendencia de tokens",
+      "title": "Token trend",
       "description": "ai_usage_tokens{window=\"24h\"} por tool, en el tiempo. ADVERTENCIA: esta serie es una gauge agregada por ventana, no un counter (ADR-001) — NUNCA aplicar rate() ni increase() sobre ella. La línea avanza al ritmo de los reinicios/re-escaneos del exporter, no de forma continua: un tramo plano entre dos puntos es el proceso corriendo sin reiniciar, no ausencia de uso.",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
@@ -249,7 +249,7 @@
     {
       "id": 6,
       "type": "stat",
-      "title": "Coste acumulado del mes",
+      "title": "Month-to-date cost",
       "description": "sum(ai_usage_cost_usd{window=\"mtd\"}) across todos los tool y model. Ventana month-to-date re-derivada del historial local en cada arranque (ADR-001): no es un contador que suba de forma monótona durante la vida del proceso.",
       "gridPos": { "h": 4, "w": 24, "x": 0, "y": 26 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
@@ -274,7 +274,7 @@
     {
       "id": 7,
       "type": "table",
-      "title": "Salud del exporter",
+      "title": "Exporter health",
       "description": "Estado del último escaneo al arranque: disponibilidad por provider, archivos/filas leídas, errores de parseo, duración del escaneo, timestamp del evento más reciente por tool, y metadatos de build. Todo gauge fijado en el arranque (ADR-001): esta tabla no cambia hasta el siguiente reinicio del proceso.",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 30 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },

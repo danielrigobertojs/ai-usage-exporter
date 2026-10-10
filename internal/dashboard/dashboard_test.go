@@ -55,17 +55,17 @@ type dashboardVariableOption struct {
 }
 
 var wantPanelTitles = []string{
-	"Ahora: tokens (1h)",
-	"Ahora: coste (1h)",
-	"Ahora: uso continuo (1h)",
-	"Ahora: frescura del escaneo",
-	"Fila de estado",
-	"Tokens por herramienta",
-	"Coste por modelo",
-	"Reparto por clase de token",
-	"Tendencia de tokens",
-	"Coste acumulado del mes",
-	"Salud del exporter",
+	"Now: tokens (1h)",
+	"Now: cost (1h)",
+	"Now: live usage (1h)",
+	"Now: scan freshness",
+	"Status row",
+	"Tokens by tool",
+	"Cost by model",
+	"Token-class distribution",
+	"Token trend",
+	"Month-to-date cost",
+	"Exporter health",
 }
 
 func flattenPanels(panels []panel) []panel {
@@ -153,9 +153,9 @@ func TestDashboardHasExpectedPanels(t *testing.T) {
 func TestLivePanelsRepresentEmptyUsageAsZero(t *testing.T) {
 	d := loadDashboard(t)
 	want := map[string]string{
-		"Ahora: tokens (1h)":       "sum(ai_usage_tokens{window=\"1h\"}) or vector(0)",
-		"Ahora: coste (1h)":        "sum(ai_usage_cost_usd{window=\"1h\"}) or vector(0)",
-		"Ahora: uso continuo (1h)": "sum by (tool) (ai_usage_tokens{window=\"1h\"}) or (0 * max by (tool) (ai_usage_provider_available))",
+		"Now: tokens (1h)":     "sum(ai_usage_tokens{window=\"1h\"}) or vector(0)",
+		"Now: cost (1h)":       "sum(ai_usage_cost_usd{window=\"1h\"}) or vector(0)",
+		"Now: live usage (1h)": "sum by (tool) (ai_usage_tokens{window=\"1h\"}) or (0 * max by (tool) (ai_usage_provider_available))",
 	}
 	for _, p := range flattenPanels(d.Panels) {
 		expr, ok := want[p.Title]
