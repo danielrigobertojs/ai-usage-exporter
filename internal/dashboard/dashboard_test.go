@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Daniel Rigoberto Jacobo Sandoval
 
-// Package dashboard has no production code of its own: it exists to pin
-// deploy/grafana/dashboards/ai-usage-overview.json against the metric
-// contract in docs/metrics.md, so a panel referencing a metric name that
+// Package dashboard has no production code of its own: it exists to pin the
+// shipped Grafana dashboards against the metric contract in docs/metrics.md,
+// so a panel referencing a metric name that
 // doesn't exist (typo or a metric that got renamed) breaks CI instead of
 // shipping a dashboard with a broken query.
 package dashboard
@@ -46,26 +46,49 @@ type dashboardTemplating struct {
 }
 
 type dashboardVariable struct {
-	Name    string                    `json:"name"`
-	Options []dashboardVariableOption `json:"options"`
+	Name       string                    `json:"name"`
+	Type       string                    `json:"type"`
+	Query      string                    `json:"query"`
+	Multi      bool                      `json:"multi"`
+	IncludeAll bool                      `json:"includeAll"`
+	AllValue   string                    `json:"allValue"`
+	Options    []dashboardVariableOption `json:"options"`
 }
 
 type dashboardVariableOption struct {
 	Value string `json:"value"`
 }
 
-var wantPanelTitles = []string{
-	"Now: tokens (1h)",
-	"Now: cost (1h)",
-	"Now: live usage (1h)",
-	"Now: scan freshness",
-	"Status row",
-	"Tokens by tool",
-	"Cost by model",
-	"Token-class distribution",
-	"Token trend",
-	"Month-to-date cost",
-	"Exporter health",
+type dashboardFixture struct {
+	name            string
+	raw             []byte
+	wantRefresh     string
+	wantPanelTitles []string
+}
+
+var dashboardFixtures = []dashboardFixture{
+	{
+		name:        "ai-usage-overview.json",
+		raw:         dashboards.AIUsageOverviewJSON,
+		wantRefresh: "30s",
+		wantPanelTitles: []string{
+			"Now: tokens (1h)", "Now: cost (1h)", "Now: live usage (1h)",
+			"Now: scan freshness", "Status row", "Tokens by tool", "Cost by model",
+			"Token-class distribution", "Token trend", "Month-to-date cost", "Exporter health",
+		},
+	},
+	{
+		name:        "ai-usage-live.json",
+		raw:         dashboards.AIUsageLiveJSON,
+		wantRefresh: "10s",
+		wantPanelTitles: []string{
+			"Ahora: tokens (1h)", "Ahora: coste (1h)", "Instancias reportando",
+			"Frescura maxima del escaneo", "Tokens 1h por instancia", "Tokens 1h por provider",
+			"Tokens 1h por modelo (top 8)", "Clases de token por instancia (1h)",
+			"Coste 1h por instancia", "Coste por modelo (ventana $window)",
+			"Detalle por modelo (ventana $window)", "Salud por instancia y provider",
+		},
+	},
 }
 
 func flattenPanels(panels []panel) []panel {
@@ -77,81 +100,81 @@ func flattenPanels(panels []panel) []panel {
 	return out
 }
 
-func loadDashboard(t *testing.T) grafanaDashboard {
+func loadDashboard(t *testing.T, fixture dashboardFixture) grafanaDashboard {
 	t.Helper()
 	var d grafanaDashboard
-	if err := json.Unmarshal(dashboards.AIUsageOverviewJSON, &d); err != nil {
-		t.Fatalf("ai-usage-overview.json does not deserialize: %v", err)
+	if err := json.Unmarshal(fixture.raw, &d); err != nil {
+		t.Fatalf("%s does not deserialize: %v", fixture.name, err)
 	}
 	return d
 }
 
+func findVariable(d grafanaDashboard, name string) dashboardVariable {
+	for _, variable := range d.Templating.List {
+		if variable.Name == name {
+			return variable
+		}
+	}
+	return dashboardVariable{}
+}
+
 func TestDashboardDeserializes(t *testing.T) {
-	d := loadDashboard(t)
-	if len(d.Panels) == 0 {
-		t.Fatal("dashboard deserialized but has zero panels")
+	for _, fixture := range dashboardFixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			d := loadDashboard(t, fixture)
+			if len(d.Panels) == 0 {
+				t.Fatal("dashboard deserialized but has zero panels")
+			}
+		})
 	}
 }
 
 func TestDashboardRefreshAndWindowOptions(t *testing.T) {
-	d := loadDashboard(t)
-	if d.Refresh != "30s" {
-		t.Errorf("dashboard refresh = %q, want 30s for live monitoring", d.Refresh)
-	}
+	for _, fixture := range dashboardFixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			d := loadDashboard(t, fixture)
+			if d.Refresh != fixture.wantRefresh {
+				t.Errorf("dashboard refresh = %q, want %s", d.Refresh, fixture.wantRefresh)
+			}
 
-	var window dashboardVariable
-	for _, variable := range d.Templating.List {
-		if variable.Name == "window" {
-			window = variable
-			break
-		}
-	}
-	if window.Name == "" {
-		t.Fatal("dashboard has no window variable")
-	}
+			window := findVariable(d, "window")
+			if window.Name == "" {
+				t.Fatal("dashboard has no window variable")
+			}
 
-	got := make([]string, 0, len(window.Options))
-	for _, option := range window.Options {
-		got = append(got, option.Value)
-	}
-	want := []string{
-		string(aggregate.Window1h),
-		string(aggregate.Window24h),
-		string(aggregate.Window7d),
-		string(aggregate.Window30d),
-		string(aggregate.WindowMTD),
-		string(aggregate.WindowAll),
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("window options = %v, want %v", got, want)
+			got := make([]string, 0, len(window.Options))
+			for _, option := range window.Options {
+				got = append(got, option.Value)
+			}
+			want := []string{string(aggregate.Window1h), string(aggregate.Window24h), string(aggregate.Window7d), string(aggregate.Window30d), string(aggregate.WindowMTD), string(aggregate.WindowAll)}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("window options = %v, want %v", got, want)
+			}
+		})
 	}
 }
 
 func TestDashboardHasExpectedPanels(t *testing.T) {
-	d := loadDashboard(t)
-	flat := flattenPanels(d.Panels)
-
-	got := make([]string, 0, len(flat))
-	for _, p := range flat {
-		got = append(got, p.Title)
-	}
-	sort.Strings(got)
-
-	want := append([]string(nil), wantPanelTitles...)
-	sort.Strings(want)
-
-	if len(got) != len(want) {
-		t.Fatalf("expected exactly %d panels, got %d: %v", len(want), len(got), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("panel titles mismatch: got %v, want %v", got, want)
-		}
+	for _, fixture := range dashboardFixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			d := loadDashboard(t, fixture)
+			flat := flattenPanels(d.Panels)
+			got := make([]string, 0, len(flat))
+			for _, p := range flat {
+				got = append(got, p.Title)
+			}
+			sort.Strings(got)
+			want := append([]string(nil), fixture.wantPanelTitles...)
+			sort.Strings(want)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("panel titles mismatch: got %v, want %v", got, want)
+			}
+		})
 	}
 }
 
 func TestLivePanelsRepresentEmptyUsageAsZero(t *testing.T) {
-	d := loadDashboard(t)
+	d := loadDashboard(t, dashboardFixtures[0])
 	want := map[string]string{
 		"Now: tokens (1h)":     "sum(ai_usage_tokens{window=\"1h\"}) or vector(0)",
 		"Now: cost (1h)":       "sum(ai_usage_cost_usd{window=\"1h\"}) or vector(0)",
@@ -217,18 +240,25 @@ func contractedMetricNames(t *testing.T) map[string]bool {
 	return names
 }
 
-func allExprs(t *testing.T) []string {
-	d := loadDashboard(t)
-	var exprs []string
-	for _, p := range flattenPanels(d.Panels) {
-		for _, tg := range p.Targets {
-			if tg.Expr != "" {
-				exprs = append(exprs, tg.Expr)
+type dashboardExpr struct {
+	dashboard string
+	expr      string
+}
+
+func allExprs(t *testing.T) []dashboardExpr {
+	var exprs []dashboardExpr
+	for _, fixture := range dashboardFixtures {
+		d := loadDashboard(t, fixture)
+		for _, p := range flattenPanels(d.Panels) {
+			for _, tg := range p.Targets {
+				if tg.Expr != "" {
+					exprs = append(exprs, dashboardExpr{dashboard: fixture.name, expr: tg.Expr})
+				}
 			}
 		}
 	}
 	if len(exprs) == 0 {
-		t.Fatal("dashboard has zero panel expressions; nothing to validate")
+		t.Fatal("dashboards have zero panel expressions; nothing to validate")
 	}
 	return exprs
 }
@@ -236,28 +266,72 @@ func allExprs(t *testing.T) []string {
 func TestDashboardExpressionsOnlyReferenceContractedMetrics(t *testing.T) {
 	contracted := contractedMetricNames(t)
 
-	for _, expr := range allExprs(t) {
-		for _, name := range exprMetricName.FindAllString(expr, -1) {
+	for _, item := range allExprs(t) {
+		for _, name := range exprMetricName.FindAllString(item.expr, -1) {
 			if !contracted[name] {
-				t.Errorf("expr %q references metric %q, which is not documented in docs/metrics.md", expr, name)
+				t.Errorf("%s expr %q references metric %q, which is not documented in docs/metrics.md", item.dashboard, item.expr, name)
 			}
 		}
 	}
 }
 
 func TestDashboardExpressionsNeverUseRateOrIncrease(t *testing.T) {
-	for _, expr := range allExprs(t) {
-		if strings.Contains(expr, "rate(") || strings.Contains(expr, "increase(") {
-			t.Errorf("expr %q uses rate()/increase() over a window gauge (ADR-001) - this is always wrong for these series", expr)
+	for _, item := range allExprs(t) {
+		if strings.Contains(item.expr, "rate(") || strings.Contains(item.expr, "increase(") {
+			t.Errorf("%s expr %q uses rate()/increase() over a window gauge (ADR-001) - this is always wrong for these series", item.dashboard, item.expr)
 		}
 	}
 }
 
 func TestDashboardPanelsHaveNonEmptyDescriptions(t *testing.T) {
-	d := loadDashboard(t)
+	for _, fixture := range dashboardFixtures {
+		d := loadDashboard(t, fixture)
+		for _, p := range flattenPanels(d.Panels) {
+			if strings.TrimSpace(p.Description) == "" {
+				t.Errorf("%s panel %q has an empty description", fixture.name, p.Title)
+			}
+		}
+	}
+}
+
+func TestLiveDashboardVariables(t *testing.T) {
+	d := loadDashboard(t, dashboardFixtures[1])
+	want := map[string]dashboardVariable{
+		"datasource": {Name: "datasource", Type: "datasource", Query: "prometheus"},
+		"instance":   {Name: "instance", Type: "query", Query: "label_values(ai_usage_tokens, instance)", Multi: true, IncludeAll: true, AllValue: ".*"},
+		"tool":       {Name: "tool", Type: "query", Query: "label_values(ai_usage_tokens{instance=~\"$instance\"}, tool)", Multi: true, IncludeAll: true, AllValue: ".*"},
+		"model":      {Name: "model", Type: "query", Query: "label_values(ai_usage_tokens{instance=~\"$instance\", tool=~\"$tool\"}, model)", Multi: true, IncludeAll: true, AllValue: ".*"},
+		"window":     {Name: "window", Type: "custom", Query: "1h,24h,7d,30d,mtd,all"},
+	}
+	if len(d.Templating.List) != len(want) {
+		t.Fatalf("live dashboard has %d variables, want %d", len(d.Templating.List), len(want))
+	}
+	for name, expected := range want {
+		got := findVariable(d, name)
+		if got.Name == "" {
+			t.Errorf("live dashboard is missing %q variable", name)
+			continue
+		}
+		if got.Name != expected.Name || got.Type != expected.Type || got.Query != expected.Query || got.Multi != expected.Multi || got.IncludeAll != expected.IncludeAll || got.AllValue != expected.AllValue {
+			t.Errorf("live variable %q = %#v, want %#v", name, got, expected)
+		}
+	}
+}
+
+var aggregationLabels = regexp.MustCompile(`(?:sum|count|max|min|avg) by \(([^)]*)\)`)
+
+func TestLiveDashboardAggregationsUseSelectionVariables(t *testing.T) {
+	d := loadDashboard(t, dashboardFixtures[1])
+	selectors := map[string]string{"instance": `instance=~"$instance"`, "tool": `tool=~"$tool"`, "model": `model=~"$model"`}
 	for _, p := range flattenPanels(d.Panels) {
-		if strings.TrimSpace(p.Description) == "" {
-			t.Errorf("panel %q has an empty description", p.Title)
+		for _, target := range p.Targets {
+			for _, match := range aggregationLabels.FindAllStringSubmatch(target.Expr, -1) {
+				for label, selector := range selectors {
+					if strings.Contains(match[1], label) && !strings.Contains(target.Expr, selector) {
+						t.Errorf("panel %q aggregates by %q but expr %q lacks selector %s", p.Title, label, target.Expr, selector)
+					}
+				}
+			}
 		}
 	}
 }

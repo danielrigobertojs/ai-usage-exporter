@@ -13,7 +13,7 @@ be discussed in the corresponding issue before being made.
 
 ## Allowed labels
 
-Only these four labels may appear in a metric covered by this contract:
+The exporter emits only these four labels on metrics covered by this contract:
 
 | Label | Meaning | Values |
 |---|---|---|
@@ -33,6 +33,11 @@ the configuration). When enabled, its value is normalized and **truncated to
 48 characters**; the full on-disk project path is never used.
 
 ### Cardinality budget
+
+Prometheus adds `instance` and `job` at scrape time. They are not exporter
+labels and therefore do not expand the label contract above. The declared
+cardinality budget is **per instance**; a Prometheus server scraping multiple
+exporters has the same budget for each scraped target.
 
 Declared bound for the expected worst case:
 
