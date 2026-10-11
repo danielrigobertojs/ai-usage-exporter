@@ -51,6 +51,11 @@ fi
 # record. Any other duplicate module, including a differing license or two
 # concrete URLs, is ambiguous and must fail rather than creating duplicate rows.
 if ! csv="$(awk -F, '
+  NF < 3 {
+    printf "error: malformed license record: %s\\n", $0 > "/dev/stderr"
+    bad = 1
+    next
+  }
   NF >= 3 {
     module = $1
     url = $2
