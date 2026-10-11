@@ -7,6 +7,30 @@ Codex CLI, OpenCode y otros): tokens, modelos, sesiones y coste leídos
 directamente de los logs locales de cada herramienta y expuestos en un endpoint
 HTTP `/metrics`.
 
+## Ve el uso antes de que se convierta en una factura
+
+![Panel oscuro con actividad de tokens y coste durante la última hora](docs/images/dashboard-live.png)
+
+El uso de la última hora responde qué se está gastando ahora mismo.
+
+![Panel oscuro que compara las dos máquinas sintéticas de demostración](docs/images/dashboard-by-instance.png)
+
+La vista de flota hace visible el uso por máquina sin cambiar las etiquetas del exporter.
+
+![Panel oscuro con el coste sintético agrupado por modelo](docs/images/dashboard-cost-by-model.png)
+
+El coste por modelo muestra dónde se concentra el gasto.
+
+![Panel oscuro con clases de tokens de entrada salida caché y razonamiento](docs/images/dashboard-token-classes.png)
+
+Las clases de token hacen visible el ahorro por caché.
+
+![Panel oscuro sobre disponibilidad errores y frescura de las fuentes](docs/images/dashboard-health.png)
+
+La vista de salud muestra si cada provider se está escaneando correctamente.
+
+Todas las imágenes usan datos demo sintéticos y deterministas; consulta `tools/demo-data`.
+
 ### Estado del proyecto
 
 El binario escanea los proveedores registrados y sirve `/metrics`. Incluye:

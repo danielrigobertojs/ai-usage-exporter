@@ -6,6 +6,30 @@ Go Prometheus exporter for local AI-agent usage (Claude Code, Codex CLI,
 OpenCode, and others): tokens, models, sessions, and cost read directly from
 each tool's local logs and exposed on an HTTP endpoint `/metrics`.
 
+## See the usage before it becomes a bill
+
+![Dark dashboard showing token and cost activity from the latest hour](docs/images/dashboard-live.png)
+
+Usage in the last hour answers what is being spent right now.
+
+![Dark dashboard comparing the two synthetic demo machines](docs/images/dashboard-by-instance.png)
+
+Fleet view makes per-machine usage visible without changing exporter labels.
+
+![Dark dashboard showing synthetic cost grouped by model](docs/images/dashboard-cost-by-model.png)
+
+Cost by model shows where spend is concentrated.
+
+![Dark dashboard showing input output cache and reasoning token classes](docs/images/dashboard-token-classes.png)
+
+Token classes make cache savings visible.
+
+![Dark dashboard reporting source availability errors and freshness](docs/images/dashboard-health.png)
+
+Health view shows whether every provider is being scanned successfully.
+
+All screenshots use deterministic synthetic demo data; see `tools/demo-data`.
+
 ### Project status
 
 The binary scans registered providers and serves `/metrics`. It includes:
