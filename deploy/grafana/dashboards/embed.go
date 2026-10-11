@@ -12,3 +12,6 @@ import _ "embed"
 
 //go:embed ai-usage-overview.json
 var AIUsageOverviewJSON []byte
+
+//go:embed ai-usage-live.json
+var AIUsageLiveJSON []byte

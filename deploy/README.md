@@ -15,9 +15,10 @@ docker compose -f deploy/docker-compose.yml up -d  # 3. Prometheus + Grafana
 ```
 
 Grafana is available at **http://localhost:3000**, with the "AI Usage
-Exporter — Overview" dashboard already loaded under Home → Dashboards. No
-manual import is required: `deploy/grafana/provisioning/dashboards/ai-usage-exporter.yaml`
-tells Grafana to read it from `deploy/grafana/dashboards/`.
+Exporter — Overview" and "AI Usage — Live por instancia, provider y modelo"
+dashboards already loaded under Home → Dashboards. No manual import is
+required: `deploy/grafana/provisioning/dashboards/ai-usage-exporter.yaml` tells
+Grafana to read them from `deploy/grafana/dashboards/`.
 
 Step 2 intentionally fails if `deploy/.env` does not exist
 (`GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD` have no default value in
@@ -44,6 +45,24 @@ scrape_configs:
 
 Then restart Prometheus (`docker compose -f deploy/docker-compose.yml restart prometheus`).
 
+### Scrape multiple exporter hosts
+
+One Prometheus can scrape several exporter machines by listing each target in
+the same `static_configs` block (or by using service discovery). Prometheus
+adds the `instance` and `job` labels at scrape time; the exporter itself still
+emits only `tool`, `model`, `token_type`, and `window`.
+
+```yaml
+scrape_configs:
+  - job_name: ai-usage-exporter
+    static_configs:
+      - targets: ["workstation-a:9477", "workstation-b:9477"]
+```
+
+Use **AI Usage — Live por instancia, provider y modelo** to filter and compare
+individual hosts. **AI Usage Exporter — Overview** intentionally aggregates the
+fleet, so its totals are not per-host figures.
+
 ### Import only the dashboard into an existing Grafana installation
 
 If you already have Grafana running and only want the dashboard, without this
@@ -51,7 +70,8 @@ If you already have Grafana running and only want the dashboard, without this
 
 1. Ensure that a Prometheus data source scrapes `ai-usage-exporter`.
 2. Go to Dashboards → New → Import and upload
-   `deploy/grafana/dashboards/ai-usage-overview.json`.
+   `deploy/grafana/dashboards/ai-usage-overview.json` or
+   `deploy/grafana/dashboards/ai-usage-live.json`.
 3. Grafana prompts you to choose the data source for the `$datasource`
    variable (it is a `datasource` variable, not a fixed UID, which is why the
    same JSON supports both file provisioning and manual import).
