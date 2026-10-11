@@ -10,6 +10,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -173,29 +174,55 @@ func TestDashboardHasExpectedPanels(t *testing.T) {
 	}
 }
 
-func TestLivePanelsRepresentEmptyUsageAsZero(t *testing.T) {
-	d := loadDashboard(t, dashboardFixtures[0])
-	want := map[string]string{
-		"Now: tokens (1h)":     "sum(ai_usage_tokens{window=\"1h\"}) or vector(0)",
-		"Now: cost (1h)":       "sum(ai_usage_cost_usd{window=\"1h\"}) or vector(0)",
-		"Now: live usage (1h)": "sum by (tool) (ai_usage_tokens{window=\"1h\"}) or (0 * max by (tool) (ai_usage_provider_available))",
+func TestUsagePanelsRepresentEmptyWindowsAsZero(t *testing.T) {
+	tests := []struct {
+		fixture dashboardFixture
+		want    map[string]string
+	}{
+		{
+			fixture: dashboardFixtures[0],
+			want: map[string]string{
+				"Now: tokens (1h)":     "sum(ai_usage_tokens{window=\"1h\"}) or vector(0)",
+				"Now: cost (1h)":       "sum(ai_usage_cost_usd{window=\"1h\"}) or vector(0)",
+				"Now: live usage (1h)": "sum by (tool) (ai_usage_tokens{window=\"1h\"}) or (0 * max by (tool) (ai_usage_provider_available))",
+			},
+		},
+		{
+			fixture: dashboardFixtures[1],
+			want: map[string]string{
+				"Ahora: tokens (1h)":                 "sum(ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or vector(0)",
+				"Ahora: coste (1h)":                  "sum(ai_usage_cost_usd{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or vector(0)",
+				"Tokens 1h por instancia":            "sum by (instance) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or (0 * max by (instance) (ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}))",
+				"Tokens 1h por provider":             "sum by (tool) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or (0 * max by (tool) (ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}))",
+				"Tokens 1h por modelo (top 8)":       "topk(8, sum by (model) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})) or vector(0)",
+				"Clases de token por instancia (1h)": "sum by (instance, token_type) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or (0 * max by (instance) (ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}))",
+				"Coste 1h por instancia":             "sum by (instance) (ai_usage_cost_usd{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or (0 * max by (instance) (ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}))",
+			},
+		},
 	}
-	for _, p := range flattenPanels(d.Panels) {
-		expr, ok := want[p.Title]
-		if !ok {
-			continue
-		}
-		if len(p.Targets) != 1 || p.Targets[0].Expr != expr {
-			got := ""
-			if len(p.Targets) == 1 {
-				got = p.Targets[0].Expr
+
+	for _, tt := range tests {
+		t.Run(tt.fixture.name, func(t *testing.T) {
+			d := loadDashboard(t, tt.fixture)
+			want := maps.Clone(tt.want)
+			for _, p := range flattenPanels(d.Panels) {
+				expr, ok := want[p.Title]
+				if !ok {
+					continue
+				}
+				if len(p.Targets) != 1 || p.Targets[0].Expr != expr {
+					got := ""
+					if len(p.Targets) == 1 {
+						got = p.Targets[0].Expr
+					}
+					t.Errorf("panel %q expression = %q, want %q", p.Title, got, expr)
+				}
+				delete(want, p.Title)
 			}
-			t.Errorf("panel %q expression = %q, want %q", p.Title, got, expr)
-		}
-		delete(want, p.Title)
-	}
-	for title := range want {
-		t.Errorf("dashboard is missing live panel %q", title)
+			for title := range want {
+				t.Errorf("dashboard is missing zero-value panel %q", title)
+			}
+		})
 	}
 }
 
