@@ -45,22 +45,51 @@ if mathutil_version="$(go list -m -f '{{.Version}}' modernc.org/mathutil 2>/dev/
   csv="$(sed -E "s#^modernc\.org/mathutil,Unknown,Unknown\$#modernc.org/mathutil,https://gitlab.com/cznic/mathutil/blob/${mathutil_version}/LICENSE,BSD-3-Clause#" <<<"$csv")"
 fi
 
-# Different licensing evidence for one module must be reviewed instead of
-# allowing sort -u to hide the conflict in the cross-platform union.
-if ! awk -F, '
+# go-licenses can intermittently return both a URL-backed record and a record
+# with an Unknown URL for the same module and license (the latter is an
+# analyzer lookup failure, not missing licensing evidence). Keep the URL-backed
+# record. Any other duplicate module, including a differing license or two
+# concrete URLs, is ambiguous and must fail rather than creating duplicate rows.
+if ! csv="$(awk -F, '
   NF >= 3 {
-    if (seen[$1] && license[$1] != $3) {
-      printf "error: %s has conflicting licenses across release targets: %s and %s\\n", $1, license[$1], $3 > "/dev/stderr"
+    module = $1
+    url = $2
+    license = $3
+
+    if (module in module_license && module_license[module] != license) {
+      printf "error: %s has conflicting licenses across release targets: %s and %s\\n", module, module_license[module], license > "/dev/stderr"
       bad = 1
+      next
     }
-    seen[$1] = 1
-    license[$1] = $3
+    module_license[module] = license
+
+    if (url == "Unknown" || url == "") {
+      if (!(module in unknown_record)) {
+        unknown_record[module] = $0
+      }
+      next
+    }
+
+    if (module in concrete_record && concrete_record[module] != $0) {
+      printf "error: %s has multiple concrete license records across release targets\\n", module > "/dev/stderr"
+      bad = 1
+      next
+    }
+    concrete_record[module] = $0
   }
-  END { exit bad }
-' <<<"$csv"; then
+  END {
+    for (module in module_license) {
+      if (module in concrete_record) {
+        print concrete_record[module]
+      } else {
+        print unknown_record[module]
+      }
+    }
+    exit bad
+  }
+' <<<"$csv" | sort)"; then
   exit 1
 fi
-csv="$(sort -u <<<"$csv")"
 
 {
   echo "# Third-Party Licenses"
