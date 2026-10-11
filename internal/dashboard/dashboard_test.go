@@ -53,6 +53,7 @@ type dashboardVariable struct {
 	Multi      bool                      `json:"multi"`
 	IncludeAll bool                      `json:"includeAll"`
 	AllValue   string                    `json:"allValue"`
+	Current    json.RawMessage           `json:"current"`
 	Options    []dashboardVariableOption `json:"options"`
 }
 
@@ -74,8 +75,8 @@ var dashboardFixtures = []dashboardFixture{
 		wantRefresh: "30s",
 		wantPanelTitles: []string{
 			"Now: tokens (1h)", "Now: cost (1h)", "Now: live usage (1h)",
-			"Now: scan freshness", "Status row", "Tokens by tool", "Cost by model",
-			"Token-class distribution", "Token trend", "Month-to-date cost", "Exporter health",
+			"Now: scan freshness", "Status row", "Tokens by tool", "Cost by model (empty = no consumption)",
+			"Token-class distribution (empty = no consumption)", "Token trend", "Month-to-date cost", "Exporter health",
 		},
 	},
 	{
@@ -86,8 +87,9 @@ var dashboardFixtures = []dashboardFixture{
 			"Ahora: tokens (1h)", "Ahora: coste (1h)", "Instancias reportando",
 			"Frescura maxima del escaneo", "Tokens 1h por instancia", "Tokens 1h por provider",
 			"Tokens 1h por modelo (top 8)", "Clases de token por instancia (1h)",
-			"Coste 1h por instancia", "Coste por modelo (ventana $window)",
-			"Detalle por modelo (ventana $window)", "Salud por instancia y provider",
+			"Coste 1h por instancia", "Coste por modelo (ventana $window; vacio = sin consumo)",
+			"Detalle por modelo (ventana $window; vacio = sin consumo)",
+			"Consumo total (ventana $window)", "Salud por instancia y provider",
 		},
 	},
 }
@@ -151,6 +153,15 @@ func TestDashboardRefreshAndWindowOptions(t *testing.T) {
 			if !reflect.DeepEqual(got, want) {
 				t.Errorf("window options = %v, want %v", got, want)
 			}
+			var current struct {
+				Value string `json:"value"`
+			}
+			if err := json.Unmarshal(window.Current, &current); err != nil {
+				t.Fatalf("window current does not deserialize: %v", err)
+			}
+			if current.Value != string(aggregate.Window30d) {
+				t.Errorf("window default = %q, want %q", current.Value, aggregate.Window30d)
+			}
 		})
 	}
 }
@@ -194,8 +205,8 @@ func TestUsagePanelsRepresentEmptyWindowsAsZero(t *testing.T) {
 				"Ahora: coste (1h)":                  "sum(ai_usage_cost_usd{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or vector(0)",
 				"Tokens 1h por instancia":            "sum by (instance) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or (0 * max by (instance) (ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}))",
 				"Tokens 1h por provider":             "sum by (tool) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or (0 * max by (tool) (ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}))",
-				"Tokens 1h por modelo (top 8)":       "topk(8, sum by (model) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})) or vector(0)",
-				"Clases de token por instancia (1h)": "sum by (instance, token_type) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or (0 * max by (instance) (ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}))",
+				"Tokens 1h por modelo (top 8)":       "topk(8, sum by (model) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}))",
+				"Clases de token por instancia (1h)": "sum by (instance, token_type) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})",
 				"Coste 1h por instancia":             "sum by (instance) (ai_usage_cost_usd{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or (0 * max by (instance) (ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}))",
 			},
 		},
@@ -223,6 +234,78 @@ func TestUsagePanelsRepresentEmptyWindowsAsZero(t *testing.T) {
 				t.Errorf("dashboard is missing zero-value panel %q", title)
 			}
 		})
+	}
+}
+
+func TestLiveDashboardOpenScopeAndEmptyStateExpressions(t *testing.T) {
+	d := loadDashboard(t, dashboardFixtures[1])
+	want := map[string][]string{
+		"Coste por modelo (ventana $window; vacio = sin consumo)": {
+			"sum by (model) (ai_usage_cost_usd{window=\"$window\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})",
+		},
+		"Detalle por modelo (ventana $window; vacio = sin consumo)": {
+			"sum by (instance, tool, model) (ai_usage_tokens{window=\"$window\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})",
+			"sum by (instance, tool, model) (ai_usage_cost_usd{window=\"$window\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})",
+		},
+		"Consumo total (ventana $window)": {
+			"sum(ai_usage_tokens{window=\"$window\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or vector(0)",
+		},
+	}
+
+	for _, p := range flattenPanels(d.Panels) {
+		expected, ok := want[p.Title]
+		if !ok {
+			continue
+		}
+		got := make([]string, 0, len(p.Targets))
+		for _, target := range p.Targets {
+			got = append(got, target.Expr)
+		}
+		if !reflect.DeepEqual(got, expected) {
+			t.Errorf("panel %q expressions = %q, want %q", p.Title, got, expected)
+		}
+		delete(want, p.Title)
+	}
+	for title := range want {
+		t.Errorf("live dashboard is missing open-scope panel %q", title)
+	}
+}
+
+func TestOverviewDashboardWindowExpressions(t *testing.T) {
+	d := loadDashboard(t, dashboardFixtures[0])
+	want := map[string][]string{
+		"Status row": {
+			"sum(ai_usage_tokens{window=\"$window\", tool=~\"$tool\"}) or vector(0)",
+			"sum(ai_usage_cost_usd{window=\"$window\", tool=~\"$tool\", model=~\"$model\"}) or vector(0)",
+			"sum(ai_usage_sessions{window=\"$window\", tool=~\"$tool\"}) or vector(0)",
+		},
+		"Tokens by tool": {
+			"sum by (tool) (ai_usage_tokens{window=\"$window\", tool=~\"$tool\"}) or (0 * max by (tool) (ai_usage_provider_available{tool=~\"$tool\"}))",
+		},
+		"Cost by model (empty = no consumption)": {
+			"sum by (model) (ai_usage_cost_usd{window=\"$window\", tool=~\"$tool\", model=~\"$model\"})",
+		},
+		"Token-class distribution (empty = no consumption)": {
+			"sum by (token_type) (ai_usage_tokens{window=\"$window\", tool=~\"$tool\"})",
+		},
+	}
+
+	for _, p := range flattenPanels(d.Panels) {
+		expected, ok := want[p.Title]
+		if !ok {
+			continue
+		}
+		got := make([]string, 0, len(p.Targets))
+		for _, target := range p.Targets {
+			got = append(got, target.Expr)
+		}
+		if !reflect.DeepEqual(got, expected) {
+			t.Errorf("panel %q expressions = %q, want %q", p.Title, got, expected)
+		}
+		delete(want, p.Title)
+	}
+	for title := range want {
+		t.Errorf("overview dashboard is missing window panel %q", title)
 	}
 }
 
@@ -346,6 +429,26 @@ func TestLiveDashboardVariables(t *testing.T) {
 }
 
 var aggregationLabels = regexp.MustCompile(`(?:sum|count|max|min|avg) by \(([^)]*)\)`)
+var zeroFillLabels = regexp.MustCompile(`sum by \(([^)]*)\) \([^)]*\) or \(0 \* max by \(([^)]*)\) \(`)
+
+func normalizedLabels(raw string) string {
+	labels := strings.Split(raw, ",")
+	for i := range labels {
+		labels[i] = strings.TrimSpace(labels[i])
+	}
+	sort.Strings(labels)
+	return strings.Join(labels, ",")
+}
+
+func TestDashboardClosedScopeZeroFillPreservesLabels(t *testing.T) {
+	for _, item := range allExprs(t) {
+		for _, match := range zeroFillLabels.FindAllStringSubmatch(item.expr, -1) {
+			if normalizedLabels(match[1]) != normalizedLabels(match[2]) {
+				t.Errorf("%s expression %q zero-fills labels %q with incompatible labels %q", item.dashboard, item.expr, match[1], match[2])
+			}
+		}
+	}
+}
 
 func TestLiveDashboardAggregationsUseSelectionVariables(t *testing.T) {
 	d := loadDashboard(t, dashboardFixtures[1])

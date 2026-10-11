@@ -157,10 +157,18 @@ Whether zeroes are materialized depends on whether the label set is closed:
    include `token_type`), which are open sets; they are published only when
    measured consumption exists. Models, classes, and costs at zero are not
    invented.
-3. The "Now" row panels convert aggregate absence into zero with
-   `or vector(0)` and complete the per-tool chart with
-   `or (0 * max by (tool) (ai_usage_provider_available))`.
-4. Missing data is not a consumption alert: availability or freshness alerts
+3. Dashboard panels may zero-fill only closed scopes (`instance`, `tool`, or
+   `window`) with `or (0 * max by (<labels>)
+   (ai_usage_provider_available{...}))`; the `max by` labels must exactly
+   match the left-hand `sum by` labels.
+4. `or vector(0)` is valid only for a scalar aggregate without `by (...)`.
+5. Dashboard panels grouped by open scopes (`model` or `token_type`) do not
+   zero-fill. Their empty state means no measured consumption and must be
+   stated in the title and description, with a scalar total in the same row
+   that renders `0` for an empty window.
+6. The shipped dashboards default `window` to `30d`: narrower nested windows
+   empty first and must not be the initial analytical view.
+7. Missing data is not a consumption alert: availability or freshness alerts
    must query `ai_usage_provider_available` and
    `ai_usage_scan_timestamp_seconds`, not the presence of token series.
 

@@ -120,8 +120,8 @@
         "multi": false,
         "includeAll": false,
         "current": {
-          "text": "24h",
-          "value": "24h"
+          "text": "30d",
+          "value": "30d"
         },
         "options": [
           {
@@ -132,12 +132,12 @@
           {
             "text": "24h",
             "value": "24h",
-            "selected": true
+            "selected": false
           },
           {
             "text": "7d",
             "value": "7d",
-            "selected": false
+            "selected": true
           },
           {
             "text": "30d",
@@ -653,7 +653,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "topk(8, sum by (model) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})) or vector(0)",
+          "expr": "topk(8, sum by (model) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}))",
           "refId": "A",
           "range": true,
           "instant": false,
@@ -718,7 +718,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (instance, token_type) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or (0 * max by (instance) (ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}))",
+          "expr": "sum by (instance, token_type) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})",
           "refId": "A",
           "range": false,
           "instant": true,
@@ -738,7 +738,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 10,
         "x": 0,
         "y": 20
       },
@@ -796,16 +796,16 @@
     },
     {
       "type": "barchart",
-      "title": "Coste por modelo (ventana $window)",
-      "description": "Gasto por modelo en la ventana elegida en $window. Usa la variable para comparar la hora actual contra 24h, 7d, 30d, el mes en curso o todo el historial disponible.",
+      "title": "Coste por modelo (ventana $window; vacio = sin consumo)",
+      "description": "Gasto por modelo en la ventana elegida en $window. Vacio significa que no hubo consumo medido en esta ventana: model es un ambito abierto y no se inventan series en cero. Usa la variable para comparar la hora actual contra 24h, 7d, 30d, el mes en curso o todo el historial disponible.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 10,
+        "x": 10,
         "y": 20
       },
       "fieldConfig": {
@@ -861,8 +861,8 @@
     },
     {
       "type": "table",
-      "title": "Detalle por modelo (ventana $window)",
-      "description": "Todos los modelos de la seleccion, no solo el top 8: tokens y coste en la ventana $window, con su instancia y su provider. Es la vista de tabla que acompana a los paneles de color, para que la identidad de una serie nunca dependa solo del color.",
+      "title": "Detalle por modelo (ventana $window; vacio = sin consumo)",
+      "description": "Todos los modelos de la seleccion, no solo el top 8: tokens y coste en la ventana $window, con su instancia y su provider. Vacio significa que no hubo consumo medido en esta ventana: model es un ambito abierto y no se inventan filas en cero. Es la vista de tabla que acompana a los paneles de color, para que la identidad de una serie nunca dependa solo del color.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -986,6 +986,60 @@
         }
       ],
       "id": 11
+    },
+    {
+      "type": "stat",
+      "title": "Consumo total (ventana $window)",
+      "description": "Total de tokens de la ventana seleccionada. Siempre muestra un valor: 0 confirma que el vacio de los paneles por modelo significa sin consumo, no un fallo de consulta.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 20,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "orientation": "horizontal",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum(ai_usage_tokens{window=\"$window\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or vector(0)",
+          "refId": "A",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "id": 13
     },
     {
       "type": "table",

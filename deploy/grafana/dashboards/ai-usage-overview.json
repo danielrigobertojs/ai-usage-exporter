@@ -121,21 +121,21 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "$datasource" },
-          "expr": "sum(ai_usage_tokens{window=\"$window\", tool=~\"$tool\"})",
+          "expr": "sum(ai_usage_tokens{window=\"$window\", tool=~\"$tool\"}) or vector(0)",
           "legendFormat": "Total tokens",
           "instant": true
         },
         {
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "$datasource" },
-          "expr": "sum(ai_usage_cost_usd{window=\"$window\", tool=~\"$tool\", model=~\"$model\"})",
+          "expr": "sum(ai_usage_cost_usd{window=\"$window\", tool=~\"$tool\", model=~\"$model\"}) or vector(0)",
           "legendFormat": "Cost USD",
           "instant": true
         },
         {
           "refId": "C",
           "datasource": { "type": "prometheus", "uid": "$datasource" },
-          "expr": "sum(ai_usage_sessions{window=\"$window\", tool=~\"$tool\"})",
+          "expr": "sum(ai_usage_sessions{window=\"$window\", tool=~\"$tool\"}) or vector(0)",
           "legendFormat": "Sessions",
           "instant": true
         }
@@ -175,7 +175,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "$datasource" },
-          "expr": "sum by (tool) (ai_usage_tokens{window=\"$window\", tool=~\"$tool\"})",
+          "expr": "sum by (tool) (ai_usage_tokens{window=\"$window\", tool=~\"$tool\"}) or (0 * max by (tool) (ai_usage_provider_available{tool=~\"$tool\"}))",
           "legendFormat": "{{tool}}",
           "instant": true,
           "format": "table"
@@ -187,8 +187,8 @@
     {
       "id": 3,
       "type": "barchart",
-      "title": "Cost by model",
-      "description": "Estimated USD cost for the $window window, aggregated by model and ordered descending. Derived from the price catalog current at scan time, not from native cost reported by a provider (docs/metrics.md, 'Reconciliation with a provider's native cost').",
+      "title": "Cost by model (empty = no consumption)",
+      "description": "Estimated USD cost for the $window window, aggregated by model and ordered descending. Empty means no measured consumption in this window: model is an open set, so zero-valued series are not invented. Derived from the price catalog current at scan time, not from native cost reported by a provider (docs/metrics.md, 'Reconciliation with a provider's native cost').",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
       "targets": [
@@ -210,8 +210,8 @@
     {
       "id": 4,
       "type": "piechart",
-      "title": "Token-class distribution",
-      "description": "Tokens for the $window window, divided by token_type (input, output, cache_read, cache_write, reasoning). The five classes are contractually disjoint (docs/metrics.md); this donut shows savings from caching directly.",
+      "title": "Token-class distribution (empty = no consumption)",
+      "description": "Tokens for the $window window, divided by token_type (input, output, cache_read, cache_write, reasoning). Empty means no measured consumption in this window: token_type is an open set, so zero-valued series are not invented. The five classes are contractually disjoint (docs/metrics.md); this donut shows savings from caching directly.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
       "datasource": { "type": "prometheus", "uid": "$datasource" },
       "targets": [
