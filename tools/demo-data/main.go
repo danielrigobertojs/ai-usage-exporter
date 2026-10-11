@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Daniel Rigoberto Jacobo Sandoval
 // Command demo-data creates deterministic, synthetic provider logs for demos.
 package main
 
@@ -30,7 +31,7 @@ func run(out string) error {
 	if err := os.MkdirAll(filepath.Join(out, ".codex", "sessions", "2026", "10", "11"), 0o755); err != nil {
 		return err
 	}
-	base := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	base := time.Date(2026, 10, 11, 20, 0, 0, 0, time.UTC)
 	claude := filepath.Join(out, ".claude", "projects", "project-alpha", "demo-claude.jsonl")
 	cf, err := os.Create(claude)
 	if err != nil {
@@ -53,7 +54,10 @@ func run(out string) error {
 	for i := 1; i <= 6; i++ {
 		write(map[string]any{"type": "event_msg", "timestamp": base.Add(time.Duration(-55+i*9) * time.Minute).Format(time.RFC3339), "payload": map[string]any{"type": "token_count", "info": map[string]any{"total_token_usage": map[string]int{"input_tokens": i * 1800, "cached_input_tokens": i * 900, "output_tokens": i * 500, "reasoning_output_tokens": i * 130, "total_tokens": i * 2300}}}})
 	}
-	dbPath := filepath.Join(out, "opencode.db")
+	if err := os.MkdirAll(filepath.Join(out, "opencode"), 0o755); err != nil {
+		return err
+	}
+	dbPath := filepath.Join(out, "opencode", "opencode.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return err

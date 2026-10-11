@@ -11,6 +11,5 @@ tools/demo-data/capture.sh docs/images
 The generator only writes invented session IDs, `project-alpha`, and fixed
 timestamps. It never reads a user home directory or an existing agent log.
 The resulting fixture contains Claude Code JSONL, a Codex rollout JSONL, and
-an OpenCode SQLite database. `capture.sh` renders the compact dark dashboard
-visuals from the same fixed demo narrative; ImageMagick is the only external
-tool required to regenerate the PNG assets.
+an OpenCode SQLite database at `opencode/opencode.db`, matching the provider's
+documented lookup path.
