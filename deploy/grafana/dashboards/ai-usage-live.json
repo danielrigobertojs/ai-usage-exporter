@@ -213,7 +213,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})",
+          "expr": "sum(ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or vector(0)",
           "refId": "A",
           "range": true,
           "instant": false,
@@ -276,7 +276,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(ai_usage_cost_usd{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})",
+          "expr": "sum(ai_usage_cost_usd{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or vector(0)",
           "refId": "A",
           "range": true,
           "instant": false,
@@ -475,7 +475,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (instance) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})",
+          "expr": "sum by (instance) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or (0 * max by (instance) (ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}))",
           "refId": "A",
           "range": true,
           "instant": false,
@@ -587,7 +587,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (tool) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})",
+          "expr": "sum by (tool) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or (0 * max by (tool) (ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}))",
           "refId": "A",
           "range": true,
           "instant": false,
@@ -653,7 +653,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "topk(8, sum by (model) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}))",
+          "expr": "topk(8, sum by (model) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})) or vector(0)",
           "refId": "A",
           "range": true,
           "instant": false,
@@ -718,7 +718,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (instance, token_type) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})",
+          "expr": "sum by (instance, token_type) (ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or (0 * max by (instance) (ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}))",
           "refId": "A",
           "range": false,
           "instant": true,
@@ -784,7 +784,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (instance) (ai_usage_cost_usd{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"})",
+          "expr": "sum by (instance) (ai_usage_cost_usd{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or (0 * max by (instance) (ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}))",
           "refId": "A",
           "range": true,
           "instant": false,
