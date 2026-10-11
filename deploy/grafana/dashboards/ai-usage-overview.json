@@ -238,7 +238,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "$datasource" },
-          "expr": "sum by (tool) (ai_usage_tokens{window=\"24h\", tool=~\"$tool\"})",
+          "expr": "sum by (tool) (ai_usage_tokens{window=\"24h\", tool=~\"$tool\"}) or (0 * max by (tool) (ai_usage_provider_available{tool=~\"$tool\"}))",
           "legendFormat": "{{tool}}",
           "instant": false
         }

@@ -27,8 +27,14 @@ import (
 type panel struct {
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
+	Type        string   `json:"type"`
+	GridPos     gridPos  `json:"gridPos"`
 	Targets     []target `json:"targets"`
 	Panels      []panel  `json:"panels"` // defensive: collapsed Grafana rows nest panels here
+}
+
+type gridPos struct {
+	Y int `json:"y"`
 }
 
 type target struct {
@@ -58,7 +64,8 @@ type dashboardVariable struct {
 }
 
 type dashboardVariableOption struct {
-	Value string `json:"value"`
+	Value    string `json:"value"`
+	Selected bool   `json:"selected"`
 }
 
 type dashboardFixture struct {
@@ -89,7 +96,8 @@ var dashboardFixtures = []dashboardFixture{
 			"Tokens 1h por modelo (top 8)", "Clases de token por instancia (1h)",
 			"Coste 1h por instancia", "Coste por modelo (ventana $window; vacio = sin consumo)",
 			"Detalle por modelo (ventana $window; vacio = sin consumo)",
-			"Consumo total (ventana $window)", "Salud por instancia y provider",
+			"Consumo total (1h)", "Consumo total (ventana $window)",
+			"Consumo total (ventana $window; detalle)", "Salud por instancia y provider",
 		},
 	},
 }
@@ -161,6 +169,15 @@ func TestDashboardRefreshAndWindowOptions(t *testing.T) {
 			}
 			if current.Value != string(aggregate.Window30d) {
 				t.Errorf("window default = %q, want %q", current.Value, aggregate.Window30d)
+			}
+			selected := make([]string, 0, 1)
+			for _, option := range window.Options {
+				if option.Selected {
+					selected = append(selected, option.Value)
+				}
+			}
+			if !reflect.DeepEqual(selected, []string{current.Value}) {
+				t.Errorf("window selected options = %v, want [%s] to match current", selected, current.Value)
 			}
 		})
 	}
@@ -250,6 +267,12 @@ func TestLiveDashboardOpenScopeAndEmptyStateExpressions(t *testing.T) {
 		"Consumo total (ventana $window)": {
 			"sum(ai_usage_tokens{window=\"$window\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or vector(0)",
 		},
+		"Consumo total (1h)": {
+			"sum(ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or vector(0)",
+		},
+		"Consumo total (ventana $window; detalle)": {
+			"sum(ai_usage_tokens{window=\"$window\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or vector(0)",
+		},
 	}
 
 	for _, p := range flattenPanels(d.Panels) {
@@ -287,6 +310,9 @@ func TestOverviewDashboardWindowExpressions(t *testing.T) {
 		},
 		"Token-class distribution (empty = no consumption)": {
 			"sum by (token_type) (ai_usage_tokens{window=\"$window\", tool=~\"$tool\"})",
+		},
+		"Token trend": {
+			"sum by (tool) (ai_usage_tokens{window=\"24h\", tool=~\"$tool\"}) or (0 * max by (tool) (ai_usage_provider_available{tool=~\"$tool\"}))",
 		},
 	}
 
@@ -429,7 +455,7 @@ func TestLiveDashboardVariables(t *testing.T) {
 }
 
 var aggregationLabels = regexp.MustCompile(`(?:sum|count|max|min|avg) by \(([^)]*)\)`)
-var zeroFillLabels = regexp.MustCompile(`sum by \(([^)]*)\) \([^)]*\) or \(0 \* max by \(([^)]*)\) \(`)
+var zeroFillLabels = regexp.MustCompile(`(?:sum|count|max|min|avg) by \(([^)]*)\) \([^)]*\) or \(0 \* max by \(([^)]*)\) \(`)
 
 func normalizedLabels(raw string) string {
 	labels := strings.Split(raw, ",")
@@ -448,6 +474,57 @@ func TestDashboardClosedScopeZeroFillPreservesLabels(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestLiveOpenScopePanelsHaveSameRowScalarZero(t *testing.T) {
+	d := loadDashboard(t, dashboardFixtures[1])
+	flat := flattenPanels(d.Panels)
+	zeroRows := map[int]bool{}
+	for _, p := range flat {
+		if p.Type != "stat" {
+			continue
+		}
+		for _, target := range p.Targets {
+			if strings.Contains(target.Expr, "or vector(0)") {
+				zeroRows[p.GridPos.Y] = true
+			}
+		}
+	}
+
+	for _, p := range flat {
+		for _, target := range p.Targets {
+			for _, match := range aggregationLabels.FindAllStringSubmatch(target.Expr, -1) {
+				labels := normalizedLabels(match[1])
+				if (strings.Contains(labels, "model") || strings.Contains(labels, "token_type")) && !zeroRows[p.GridPos.Y] {
+					t.Errorf("open-scope panel %q in row y=%d has no scalar zero explaining an empty result", p.Title, p.GridPos.Y)
+				}
+			}
+		}
+	}
+}
+
+func TestLiveHealthPanelExpressions(t *testing.T) {
+	d := loadDashboard(t, dashboardFixtures[1])
+	want := []string{
+		"ai_usage_scan_files{instance=~\"$instance\", tool=~\"$tool\"}",
+		"ai_usage_scan_errors{instance=~\"$instance\", tool=~\"$tool\"}",
+		"ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}",
+		"time() - ai_usage_last_event_timestamp_seconds{instance=~\"$instance\", tool=~\"$tool\"}",
+	}
+	for _, p := range flattenPanels(d.Panels) {
+		if p.Title != "Salud por instancia y provider" {
+			continue
+		}
+		got := make([]string, 0, len(p.Targets))
+		for _, target := range p.Targets {
+			got = append(got, target.Expr)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("health panel expressions = %q, want %q", got, want)
+		}
+		return
+	}
+	t.Error("live dashboard is missing health panel")
 }
 
 func TestLiveDashboardAggregationsUseSelectionVariables(t *testing.T) {

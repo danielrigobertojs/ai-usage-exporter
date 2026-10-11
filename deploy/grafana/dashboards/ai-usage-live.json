@@ -137,12 +137,12 @@
           {
             "text": "7d",
             "value": "7d",
-            "selected": true
+            "selected": false
           },
           {
             "text": "30d",
             "value": "30d",
-            "selected": false
+            "selected": true
           },
           {
             "text": "mtd",
@@ -607,7 +607,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 10,
         "x": 0,
         "y": 12
       },
@@ -673,8 +673,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 10,
+        "x": 10,
         "y": 12
       },
       "fieldConfig": {
@@ -727,6 +727,38 @@
         }
       ],
       "id": 8
+    },
+    {
+      "type": "stat",
+      "title": "Consumo total (1h)",
+      "description": "Total de tokens de la ultima hora. Siempre muestra un valor: 0 explica el vacio de los paneles por modelo y clase de token de esta misma fila.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 4, "x": 20, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "orientation": "horizontal",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "editorMode": "code",
+        "expr": "sum(ai_usage_tokens{window=\"1h\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or vector(0)",
+        "refId": "A",
+        "range": false,
+        "instant": true,
+        "format": "time_series"
+      }],
+      "id": 14
     },
     {
       "type": "timeseries",
@@ -869,7 +901,7 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 24,
+        "w": 20,
         "x": 0,
         "y": 28
       },
@@ -986,6 +1018,38 @@
         }
       ],
       "id": 11
+    },
+    {
+      "type": "stat",
+      "title": "Consumo total (ventana $window; detalle)",
+      "description": "Total de tokens de la ventana seleccionada. Siempre muestra un valor: 0 explica el vacio de la tabla de detalle por modelo en esta misma fila.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 9, "w": 4, "x": 20, "y": 28 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "orientation": "horizontal",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "editorMode": "code",
+        "expr": "sum(ai_usage_tokens{window=\"$window\", instance=~\"$instance\", tool=~\"$tool\", model=~\"$model\"}) or vector(0)",
+        "refId": "A",
+        "range": false,
+        "instant": true,
+        "format": "time_series"
+      }],
+      "id": 15
     },
     {
       "type": "stat",
