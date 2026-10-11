@@ -20,9 +20,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// requirePOSIXToolchain skips on platforms where the harness cannot work.
+//
+// The suite drives a bash script through a stub `go` binary that has no .exe
+// suffix, and relies on POSIX permissions and a git work tree. Windows CI
+// runners have git and bash, but the extensionless stub is not resolvable
+// there, so these tests would fail for a reason unrelated to the generator.
+//
+// The generator itself is only ever executed by CI on ubuntu, so skipping here
+// does not hide a platform the job would otherwise cover.
+func requirePOSIXToolchain(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("bash toolchain stub is not resolvable on Windows; the generator is exercised on ubuntu in CI")
+	}
+}
 
 // scriptPath locates the generator relative to this test file so the suite
 // works regardless of the working directory `go test` picks.
@@ -45,6 +62,7 @@ func scriptPath(t *testing.T) string {
 // caller supplies a scratch repository rather than a bare temp dir.
 func runScript(t *testing.T, dir string, env ...string) (string, int) {
 	t.Helper()
+	requirePOSIXToolchain(t)
 	cmd := exec.Command("bash", scriptPath(t))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
