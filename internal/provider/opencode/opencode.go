@@ -3,8 +3,9 @@
 
 // Package opencode implements the provider.Provider for OpenCode, the only
 // supported tool that keeps its history in SQLite instead of JSONL:
-// ~/.local/share/opencode/opencode.db. OpenCode has two schema generations:
-// session/message/part and session_v2/session_message, with
+// ~/.local/share/opencode/opencode.db. OpenCode has a legacy schema and a
+// newer family of schemas whose table names can change between generations,
+// with
 // tokens and native cost living inside message.data's JSON blob and tool-call
 // counts in part.data.
 //
@@ -22,7 +23,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -96,17 +100,18 @@ FROM message m JOIN session s ON s.id = m.session_id
 WHERE json_valid(m.data) AND json_extract(m.data, '$.role') = 'assistant'
 ORDER BY m.id`
 
-// v2Query deliberately counts only the type discriminator inside content.
-// content itself can contain model reasoning and other text, so it is never
-// selected, unmarshaled, or copied into a UsageEvent.
-const v2Query = `
+// currentQuery deliberately counts only the type discriminator inside
+// content. content itself can contain model reasoning and other text, so it
+// is never selected, unmarshaled, or copied into a UsageEvent. Table names
+// are quoted separately after being obtained from SQLite's own schema.
+const currentQuery = `
 SELECT m.id, m.session_id, m.data, s.directory,
        (
                SELECT COUNT(*)
                FROM json_each(m.data, '$.content') content
                WHERE json_extract(content.value, '$.type') = 'tool'
        ) AS tool_calls
-FROM session_message m JOIN session_v2 s ON s.id = m.session_id
+FROM %s m JOIN %s s ON s.id = m.session_id
 WHERE m.type = 'assistant' AND json_valid(m.data)
 ORDER BY m.id`
 
@@ -153,21 +158,85 @@ func (d messageData) modelID() string {
 	return d.ModelID
 }
 
+// schemaQuery selects a current schema by its columns, not its table names.
+// OpenCode leaves old tables behind during migrations, so falling back to
+// legacy merely because a future generation is not called session_v2 would
+// publish stale history. The newest compatible tables are the active schema;
+// sqlite_master.rowid reflects their creation order and avoids scanning any
+// message rows merely to make this selection.
 func schemaQuery(ctx context.Context, db *sql.DB) (string, error) {
-	var v2Tables int
-	err := db.QueryRowContext(ctx, `
-SELECT COUNT(*) FROM sqlite_master
-WHERE type = 'table' AND name IN ('session_v2', 'session_message')`).Scan(&v2Tables)
+	tables, err := db.QueryContext(ctx, `
+SELECT name, rowid FROM sqlite_master
+WHERE type = 'table'
+ORDER BY rowid DESC`)
 	if err != nil {
 		return "", err
 	}
-	if v2Tables == 2 {
-		// A database containing both generations must prefer v2. Reading both
-		// and summing would make historical semantics a product decision; this
-		// provider therefore selects the active generation rather than merging.
-		return v2Query, nil
+	defer tables.Close()
+
+	type candidate struct {
+		name  string
+		rowID int64
 	}
-	return legacyQuery, nil
+	var sessions, messages []candidate
+	for tables.Next() {
+		var table candidate
+		if err := tables.Scan(&table.name, &table.rowID); err != nil {
+			return "", err
+		}
+		columns, err := tableColumns(ctx, db, table.name)
+		if err != nil {
+			return "", err
+		}
+		if hasColumns(columns, "id", "directory") {
+			sessions = append(sessions, table)
+		}
+		if hasColumns(columns, "id", "session_id", "type", "data") {
+			messages = append(messages, table)
+		}
+	}
+	if err := tables.Err(); err != nil {
+		return "", err
+	}
+	if len(sessions) == 0 || len(messages) == 0 {
+		return legacyQuery, nil
+	}
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].rowID > sessions[j].rowID })
+	sort.Slice(messages, func(i, j int) bool { return messages[i].rowID > messages[j].rowID })
+	return fmt.Sprintf(currentQuery, quoteIdentifier(messages[0].name), quoteIdentifier(sessions[0].name)), nil
+}
+
+func tableColumns(ctx context.Context, db *sql.DB, table string) (map[string]struct{}, error) {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+quoteIdentifier(table)+")")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	columns := make(map[string]struct{})
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return nil, err
+		}
+		columns[name] = struct{}{}
+	}
+	return columns, rows.Err()
+}
+
+func hasColumns(columns map[string]struct{}, required ...string) bool {
+	for _, column := range required {
+		if _, ok := columns[column]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func quoteIdentifier(identifier string) string {
+	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
 }
 
 // reasoningNested reports whether this record's own arithmetic shows

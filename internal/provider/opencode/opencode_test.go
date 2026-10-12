@@ -93,10 +93,24 @@ func buildV2Fixture(t *testing.T, both bool) string {
 	return path
 }
 
+func buildV3Fixture(t *testing.T) string {
+	t.Helper()
+	sessions := []testdata.V2Session{{ID: "ses_v3", Directory: "/home/user/projects/v3"}}
+	messages := []testdata.V2Message{
+		{ID: "v3_assistant", SessionID: "ses_v3", Type: "assistant", Data: `{"time":{"created":1791804042674},"model":{"id":"space-bunny-v3","providerID":"opencode"},"tokens":{"total":18,"input":10,"output":3,"reasoning":5,"cache":{"read":0,"write":0}},"content":[{"type":"tool","callID":"REDACTED"}]}`},
+	}
+	path, err := testdata.BuildV3WithLegacy(t.TempDir(), sessions, messages)
+	if err != nil {
+		t.Fatalf("build v3 fixture: %v", err)
+	}
+	return path
+}
+
 func TestParseSchemaGenerations(t *testing.T) {
 	legacy := buildFixture(t)
 	v2 := buildV2Fixture(t, false)
 	both := buildV2Fixture(t, true)
+	v3 := buildV3Fixture(t)
 
 	tests := []struct {
 		name      string
@@ -108,6 +122,7 @@ func TestParseSchemaGenerations(t *testing.T) {
 		{name: "legacy", path: legacy, messageID: "msg_1", model: "nemotron-3-super-free", toolCalls: 2},
 		{name: "v2", path: v2, messageID: "v2_assistant", model: "space-bunny-free", toolCalls: 1},
 		{name: "both generations prefer v2", path: both, messageID: "v2_assistant", model: "space-bunny-free", toolCalls: 1},
+		{name: "renamed current generation prefers v3 over legacy", path: v3, messageID: "v3_assistant", model: "space-bunny-v3", toolCalls: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
