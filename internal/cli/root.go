@@ -320,6 +320,8 @@ type doctorRow struct {
 	Errors           int      `json:"errors"`
 	FirstParseError  string   `json:"first_parse_error,omitempty"`
 	BudgetHit        bool     `json:"budget_hit"`
+	Stale            bool     `json:"stale"`
+	StaleReason      string   `json:"stale_reason,omitempty"`
 	Roots            []string `json:"roots"`
 	Hint             string   `json:"hint"`
 	PricingSource    string   `json:"pricing_source"`
@@ -390,7 +392,7 @@ func doctor(args []string, out, errOut io.Writer) int {
 		if roots == nil {
 			roots = []string{}
 		}
-		row := doctorRow{ID: d.ID, Available: tr.Available, Files: tr.FilesScanned, Skipped: tr.FilesSkipped, SkippedBySize: tr.FilesSkippedBySize, SkippedByType: tr.FilesSkippedByType, SkippedByBudget: tr.FilesSkippedByBudget, Errors: tr.ParseErrors, FirstParseError: tr.FirstParseError, BudgetHit: tr.BudgetHit, Roots: roots, Hint: fmt.Sprintf("roots: %s", strings.Join(roots, ", ")), PricingSource: cat.Source(), ZeroPricedModels: []string{}, UnpricedModels: []string{}}
+		row := doctorRow{ID: d.ID, Available: tr.Available, Files: tr.FilesScanned, Skipped: tr.FilesSkipped, SkippedBySize: tr.FilesSkippedBySize, SkippedByType: tr.FilesSkippedByType, SkippedByBudget: tr.FilesSkippedByBudget, Errors: tr.ParseErrors, FirstParseError: tr.FirstParseError, BudgetHit: tr.BudgetHit, Stale: tr.StaleReason != "", StaleReason: tr.StaleReason, Roots: roots, Hint: fmt.Sprintf("roots: %s", strings.Join(roots, ", ")), PricingSource: cat.Source(), ZeroPricedModels: []string{}, UnpricedModels: []string{}}
 		for m := range models[d.ID] {
 			r, ok := cat.Lookup(d.ID, m)
 			if !ok {
@@ -407,7 +409,10 @@ func doctor(args []string, out, errOut io.Writer) int {
 		_ = json.NewEncoder(out).Encode(rows)
 	} else {
 		for _, r := range rows {
-			fmt.Fprintf(out, "%s\tavailable=%t\tfiles=%d\tskipped=%d (size=%d type=%d budget=%d)\terrors=%d\tbudget_hit=%t", r.ID, r.Available, r.Files, r.Skipped, r.SkippedBySize, r.SkippedByType, r.SkippedByBudget, r.Errors, r.BudgetHit)
+			fmt.Fprintf(out, "%s\tavailable=%t\tfiles=%d\tskipped=%d (size=%d type=%d budget=%d)\terrors=%d\tbudget_hit=%t\tstale=%t", r.ID, r.Available, r.Files, r.Skipped, r.SkippedBySize, r.SkippedByType, r.SkippedByBudget, r.Errors, r.BudgetHit, r.Stale)
+			if r.StaleReason != "" {
+				fmt.Fprintf(out, "\tstale_reason=%s", r.StaleReason)
+			}
 			if r.FirstParseError != "" {
 				fmt.Fprintf(out, "\tfirst_parse_error=%s", r.FirstParseError)
 			}

@@ -43,16 +43,18 @@ func ID(ctx context.Context) string { return idFrom(ctx) }
 // ToolResult reports what Run observed for one provider during a single
 // scan, independent of whether any of its events survived aggregation.
 type ToolResult struct {
-	Available            bool // at least one source was found and at least one read fully
-	FilesScanned         int
-	FilesSkipped         int
-	FilesSkippedBySize   int
-	FilesSkippedByType   int
-	FilesSkippedByBudget int
-	ParseErrors          int
-	FirstParseError      string
-	BudgetHit            bool
-	ResolvedRoots        []string
+	Available              bool // at least one source was found and at least one read fully
+	FilesScanned           int
+	FilesSkipped           int
+	FilesSkippedBySize     int
+	FilesSkippedByType     int
+	FilesSkippedByBudget   int
+	ParseErrors            int
+	FirstParseError        string
+	BudgetHit              bool
+	ResolvedRoots          []string
+	LatestSourceModifiedAt time.Time // newest source fully read during this scan
+	StaleReason            string    // empty unless source metadata indicates silent usage
 }
 
 // Result is everything a single call to Run produces. It is immutable once
@@ -125,6 +127,7 @@ func Run(ctx context.Context, reg *provider.Registry, env provider.Env, b provid
 		return Result{}, err
 	}
 	snapshot := agg.Snapshot()
+	markStaleProviders(now, snapshot, perTool, logger)
 	logger.Info("scan complete", "duration", time.Since(start), "tools", len(perTool), "events_duplicates", snapshot.Duplicates, "events_invalid", snapshot.Invalid)
 	if snapshot.Duplicates > 0 {
 		logger.Debug("duplicate events discarded", "count", snapshot.Duplicates)
@@ -135,6 +138,49 @@ func Run(ctx context.Context, reg *provider.Registry, env provider.Env, b provid
 		PerTool:  perTool,
 		Duration: time.Since(start),
 	}, nil
+}
+
+const (
+	// staleEventAge is deliberately measured in weeks: a provider can be idle
+	// for a few days, but three weeks without an event deserves an operator
+	// warning even when its source itself has not changed.
+	staleEventAge = 21 * 24 * time.Hour
+	// sourceEventLag detects the more suspicious case where a source keeps
+	// changing while the parsed event stream remains behind it.
+	sourceEventLag = 7 * 24 * time.Hour
+)
+
+// staleReason describes a non-fatal sign that a provider is no longer
+// yielding current usage. It intentionally uses timestamps only; no source
+// path or log content can escape through diagnostics.
+func staleReason(now, lastEvent, latestSource time.Time) string {
+	if latestSource.IsZero() {
+		return ""
+	}
+	if lastEvent.IsZero() {
+		return "no_usage_events"
+	}
+	if latestSource.Sub(lastEvent) >= sourceEventLag {
+		return "source_newer_than_last_event"
+	}
+	if now.Sub(lastEvent) >= staleEventAge {
+		return "last_event_too_old"
+	}
+	return ""
+}
+
+// markStaleProviders records and logs warnings without changing Available:
+// sources that can be read remain available even if their history is silent.
+func markStaleProviders(now time.Time, snapshot aggregate.Snapshot, perTool map[string]ToolResult, logger *slog.Logger) {
+	for id, tr := range perTool {
+		reason := staleReason(now, snapshot.LastEventAt[id], tr.LatestSourceModifiedAt)
+		if reason == "" {
+			continue
+		}
+		tr.StaleReason = reason
+		perTool[id] = tr
+		logger.Warn("provider usage appears stale", "tool", id, "reason", reason)
+	}
 }
 
 // scanProvider discovers and parses every source for one provider, folding
@@ -198,6 +244,9 @@ func scanProvider(ctx context.Context, p provider.Provider, env provider.Env, b 
 		}
 		logger.Debug("source read", "source", i+1, "path", src.Path, "bytes", src.Size, "duration", time.Since(started))
 		successes++
+		if src.ModTime.After(tr.LatestSourceModifiedAt) {
+			tr.LatestSourceModifiedAt = src.ModTime
+		}
 	}
 	if cancelled > 0 {
 		logger.Warn("source parsing cancelled", "sources", cancelled, "error_type", fmt.Sprintf("%T", ctx.Err()))

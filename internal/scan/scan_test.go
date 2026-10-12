@@ -290,6 +290,66 @@ func TestRunParseErrorWarnsWithoutSourceContents(t *testing.T) {
 	}
 }
 
+func TestStaleReason(t *testing.T) {
+	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		lastEvent  time.Time
+		latestFile time.Time
+		want       string
+	}{
+		{
+			name:       "provider al dia",
+			lastEvent:  now.Add(-time.Hour),
+			latestFile: now.Add(-30 * time.Minute),
+		},
+		{
+			name:       "provider atrasado respecto de fuente",
+			lastEvent:  now.Add(-10 * 24 * time.Hour),
+			latestFile: now.Add(-time.Hour),
+			want:       "source_newer_than_last_event",
+		},
+		{
+			name:       "provider sin eventos",
+			latestFile: now.Add(-time.Hour),
+			want:       "no_usage_events",
+		},
+		{
+			name:       "eventos sin nueva escritura en fuente",
+			lastEvent:  now.Add(-22 * 24 * time.Hour),
+			latestFile: now.Add(-22 * 24 * time.Hour),
+			want:       "last_event_too_old",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := staleReason(now, tt.lastEvent, tt.latestFile); got != tt.want {
+				t.Errorf("staleReason() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunLogsStaleProviderWithoutPaths(t *testing.T) {
+	reg := provider.NewRegistry()
+	mustRegister(t, reg, namedFake{id: "alpha", eventsPerSource: 0})
+	var logs bytes.Buffer
+	old := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(old) })
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	_, err := Run(WithID(context.Background(), "stale-test"), reg, fakeEnv("alpha"), testBudget(), time.Now(), time.UTC)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := logs.String()
+	if !strings.Contains(got, "provider usage appears stale") || !strings.Contains(got, "reason=no_usage_events") {
+		t.Errorf("missing stale provider warning: %s", got)
+	}
+	if strings.Contains(got, "/home/user") {
+		t.Errorf("stale warning leaked source path: %s", got)
+	}
+}
+
 func mustRegister(t *testing.T, reg *provider.Registry, p provider.Provider) {
 	t.Helper()
 	if err := reg.Register(p); err != nil {
