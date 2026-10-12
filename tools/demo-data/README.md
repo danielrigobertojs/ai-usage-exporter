@@ -1,11 +1,10 @@
-# Synthetic dashboard data
+# Synthetic demo data
 
-Generate the deterministic, non-personal provider data used for the README
-visuals with:
+Generate deterministic, non-personal provider data for manual demos and tests
+with:
 
 ```bash
 go run ./tools/demo-data -out /tmp/ai-usage-demo
-tools/demo-data/capture.sh docs/images
 ```
 
 The generator only writes invented session IDs, `project-alpha`, and fixed
