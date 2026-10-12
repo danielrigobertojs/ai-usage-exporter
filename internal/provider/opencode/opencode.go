@@ -3,7 +3,8 @@
 
 // Package opencode implements the provider.Provider for OpenCode, the only
 // supported tool that keeps its history in SQLite instead of JSONL:
-// ~/.local/share/opencode/opencode.db, tables session/message/part, with
+// ~/.local/share/opencode/opencode.db. OpenCode has two schema generations:
+// session/message/part and session_v2/session_message, with
 // tokens and native cost living inside message.data's JSON blob and tool-call
 // counts in part.data.
 //
@@ -82,7 +83,7 @@ func DSN(path string) string {
 // it still gets a second, Go-level skip in the row loop below, since a row
 // can be valid JSON and still not decode into messageData the way Parse
 // expects.
-const query = `
+const legacyQuery = `
 SELECT m.id, m.session_id, m.data, s.directory,
        (
                SELECT COUNT(*)
@@ -95,6 +96,20 @@ FROM message m JOIN session s ON s.id = m.session_id
 WHERE json_valid(m.data) AND json_extract(m.data, '$.role') = 'assistant'
 ORDER BY m.id`
 
+// v2Query deliberately counts only the type discriminator inside content.
+// content itself can contain model reasoning and other text, so it is never
+// selected, unmarshaled, or copied into a UsageEvent.
+const v2Query = `
+SELECT m.id, m.session_id, m.data, s.directory,
+       (
+               SELECT COUNT(*)
+               FROM json_each(m.data, '$.content') content
+               WHERE json_extract(content.value, '$.type') = 'tool'
+       ) AS tool_calls
+FROM session_message m JOIN session_v2 s ON s.id = m.session_id
+WHERE m.type = 'assistant' AND json_valid(m.data)
+ORDER BY m.id`
+
 // messageData is the narrow slice of OpenCode's message.data JSON this
 // provider reads. OpenCode's schema has changed across versions, so every
 // field is optional: a missing field decodes to its zero value, never an
@@ -103,7 +118,11 @@ ORDER BY m.id`
 type messageData struct {
 	ModelID    string `json:"modelID"`
 	ProviderID string `json:"providerID"`
-	Time       struct {
+	Model      struct {
+		ID         string `json:"id"`
+		ProviderID string `json:"providerID"`
+	} `json:"model"`
+	Time struct {
 		Created int64 `json:"created"`
 	} `json:"time"`
 	Tokens struct {
@@ -122,6 +141,33 @@ type messageData struct {
 		Reasoning int64 `json:"reasoning"`
 	} `json:"tokens"`
 	Cost float64 `json:"cost"`
+}
+
+// modelID returns the model identifier from either known on-disk generation.
+// This is intentionally a closed struct, rather than a map or reflection: in
+// particular, the v2 content field is not part of messageData.
+func (d messageData) modelID() string {
+	if d.Model.ID != "" {
+		return d.Model.ID
+	}
+	return d.ModelID
+}
+
+func schemaQuery(ctx context.Context, db *sql.DB) (string, error) {
+	var v2Tables int
+	err := db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM sqlite_master
+WHERE type = 'table' AND name IN ('session_v2', 'session_message')`).Scan(&v2Tables)
+	if err != nil {
+		return "", err
+	}
+	if v2Tables == 2 {
+		// A database containing both generations must prefer v2. Reading both
+		// and summing would make historical semantics a product decision; this
+		// provider therefore selects the active generation rather than merging.
+		return v2Query, nil
+	}
+	return legacyQuery, nil
 }
 
 // reasoningNested reports whether this record's own arithmetic shows
@@ -155,6 +201,10 @@ func (openCodeProvider) Parse(ctx context.Context, src provider.Source, emit fun
 	}
 	defer db.Close()
 
+	query, err := schemaQuery(ctx, db)
+	if err != nil {
+		return privacy.Err(toolID, filepath.Base(src.Path), 0, err)
+	}
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return privacy.Err(toolID, filepath.Base(src.Path), 0, err)
@@ -189,7 +239,7 @@ func (openCodeProvider) Parse(ctx context.Context, src provider.Source, emit fun
 				MessageID: id,
 			},
 			Tool:      toolID,
-			Model:     md.ModelID,
+			Model:     md.modelID(),
 			ProjectID: directory,
 			Role:      "assistant",
 			ToolCalls: toolCalls,

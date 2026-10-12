@@ -35,6 +35,20 @@ type Message struct {
 	Data      string
 }
 
+// V2Session and V2Message mirror the current OpenCode session_v2 and
+// session_message tables. Data remains an opaque, redacted JSON fixture.
+type V2Session struct {
+	ID        string
+	Directory string
+}
+
+type V2Message struct {
+	ID        string
+	SessionID string
+	Type      string
+	Data      string
+}
+
 // Part describes one fixture row for OpenCode's `part` table. Type is held
 // inside Data, as it is in the real schema. Its payload is intentionally not
 // modeled because the provider only needs that discriminator to count calls.
@@ -211,5 +225,49 @@ func BuildWithParts(dir string, sessions []Session, messages []Message, parts []
 		}
 	}
 
+	return path, nil
+}
+
+// BuildV2 creates a current-generation-only database. The schema is copied
+// from a contemporary OpenCode database; BuildBoth is used to model the real
+// migration state where the historical tables remain present too.
+func BuildV2(dir string, sessions []V2Session, messages []V2Message) (string, error) {
+	return buildV2(dir, sessions, messages, false)
+}
+
+// BuildBoth creates both schema generations. It is intentionally not a
+// union fixture: callers choose which generation's rows to populate so tests
+// can prove selection rather than accidentally validate double counting.
+func BuildBoth(dir string, sessions []V2Session, messages []V2Message) (string, error) {
+	return buildV2(dir, sessions, messages, true)
+}
+
+func buildV2(dir string, sessions []V2Session, messages []V2Message, withLegacy bool) (string, error) {
+	path := filepath.Join(dir, "opencode.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		return "", fmt.Errorf("testdata: open %s: %w", path, err)
+	}
+	defer db.Close()
+	if withLegacy {
+		if _, err := db.Exec("CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL); CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL); CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);"); err != nil {
+			return "", fmt.Errorf("testdata: create legacy schema: %w", err)
+		}
+	}
+	const schema = "CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT NOT NULL);" +
+		"CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);"
+	if _, err := db.Exec(schema); err != nil {
+		return "", fmt.Errorf("testdata: create v2 schema: %w", err)
+	}
+	for _, s := range sessions {
+		if _, err := db.Exec(`INSERT INTO session_v2 (id, directory) VALUES (?, ?)`, s.ID, s.Directory); err != nil {
+			return "", fmt.Errorf("testdata: insert v2 session %s: %w", s.ID, err)
+		}
+	}
+	for i, m := range messages {
+		if _, err := db.Exec(`INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?, ?, ?, ?, 0, 0, ?)`, m.ID, m.SessionID, m.Type, i, m.Data); err != nil {
+			return "", fmt.Errorf("testdata: insert v2 message %s: %w", m.ID, err)
+		}
+	}
 	return path, nil
 }
