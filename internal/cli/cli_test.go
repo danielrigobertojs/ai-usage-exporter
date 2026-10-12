@@ -119,6 +119,26 @@ func TestDoctorReportsUnavailableInjectedProvider(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsSilentProviderWithoutMakingItUnavailable(t *testing.T) {
+	oldRegistry, oldEnvironment := registry, environment
+	t.Cleanup(func() { registry, environment = oldRegistry, oldEnvironment })
+	registry = func() (*provider.Registry, error) { r := provider.NewRegistry(); return r, r.Register(fake.New(0)) }
+	environment = func() provider.Env {
+		return provider.Env{GOOS: "linux", Home: "/home/test", Getenv: func(string) string { return "" }, FS: fstest.MapFS{"home/test/.fake/a.jsonl": {Data: []byte("x"), ModTime: time.Now()}}}
+	}
+	var out, errOut bytes.Buffer
+	if got := Execute([]string{"doctor", "--output", "json"}, &out, &errOut); got != 0 {
+		t.Fatalf("exit=%d stderr=%s", got, errOut.String())
+	}
+	var rows []doctorRow
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || !rows[0].Available || !rows[0].Stale || rows[0].StaleReason != "no_usage_events" {
+		t.Fatalf("rows=%+v, want available silent provider warning", rows)
+	}
+}
+
 func TestReportJSONUnknownPriceWithInjectedProvider(t *testing.T) {
 	oldRegistry, oldEnvironment := registry, environment
 	t.Cleanup(func() { registry, environment = oldRegistry, oldEnvironment })
