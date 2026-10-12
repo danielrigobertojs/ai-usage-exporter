@@ -7,9 +7,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -65,6 +67,90 @@ func parseAll(t *testing.T, path string) []model.UsageEvent {
 		t.Fatalf("Parse: unexpected error: %v", err)
 	}
 	return events
+}
+
+const v2ContentSentinel = "V2-REASONING-MUST-NEVER-LEAVE-THE-PROVIDER"
+
+func buildV2Fixture(t *testing.T, both bool) string {
+	t.Helper()
+	sessions := []testdata.V2Session{{ID: "ses_v2", Directory: "/home/user/projects/v2"}}
+	messages := []testdata.V2Message{
+		{ID: "v2_assistant", SessionID: "ses_v2", Type: "assistant", Data: `{"time":{"created":1791804042674},"model":{"id":"space-bunny-free","providerID":"opencode"},"tokens":{"total":18,"input":10,"output":3,"reasoning":5,"cache":{"read":0,"write":0}},"cost":0,"content":[{"type":"reasoning","text":"` + v2ContentSentinel + `"},{"type":"tool","callID":"REDACTED"}]}`},
+		{ID: "v2_user", SessionID: "ses_v2", Type: "user", Data: `{"content":[{"type":"text","text":"` + v2ContentSentinel + `"}]}`},
+	}
+	var (
+		path string
+		err  error
+	)
+	if both {
+		path, err = testdata.BuildBoth(t.TempDir(), sessions, messages)
+	} else {
+		path, err = testdata.BuildV2(t.TempDir(), sessions, messages)
+	}
+	if err != nil {
+		t.Fatalf("build v2 fixture: %v", err)
+	}
+	return path
+}
+
+func TestParseSchemaGenerations(t *testing.T) {
+	legacy := buildFixture(t)
+	v2 := buildV2Fixture(t, false)
+	both := buildV2Fixture(t, true)
+
+	tests := []struct {
+		name      string
+		path      string
+		messageID string
+		model     string
+		toolCalls int64
+	}{
+		{name: "legacy", path: legacy, messageID: "msg_1", model: "nemotron-3-super-free", toolCalls: 2},
+		{name: "v2", path: v2, messageID: "v2_assistant", model: "space-bunny-free", toolCalls: 1},
+		{name: "both generations prefer v2", path: both, messageID: "v2_assistant", model: "space-bunny-free", toolCalls: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			events := parseAll(t, tt.path)
+			if len(events) == 0 {
+				t.Fatal("Parse emitted no events")
+			}
+			var got *model.UsageEvent
+			for i := range events {
+				if events[i].Key.MessageID == tt.messageID {
+					got = &events[i]
+				}
+			}
+			if got == nil {
+				ids := make(map[string]model.UsageEvent, len(events))
+				for _, event := range events {
+					ids[event.Key.MessageID] = event
+				}
+				t.Fatalf("missing %q in events %v", tt.messageID, keysOf(ids))
+			}
+			if got.Model != tt.model || got.ToolCalls != tt.toolCalls {
+				t.Errorf("event = model %q, tool calls %d; want %q, %d", got.Model, got.ToolCalls, tt.model, tt.toolCalls)
+			}
+		})
+	}
+}
+
+// TestParseV2ContentIsNeverDecoded protects the v2 privacy boundary. The
+// test fails both if content is added to messageData and if any emitted event
+// acquires a route for that literal model-reasoning text.
+func TestParseV2ContentIsNeverDecoded(t *testing.T) {
+	if _, ok := reflect.TypeOf(messageData{}).FieldByName("Content"); ok {
+		t.Fatal("messageData must not unmarshal content; it can contain model reasoning")
+	}
+	for _, event := range parseAll(t, buildV2Fixture(t, false)) {
+		encoded, err := json.Marshal(event)
+		if err != nil {
+			t.Fatalf("marshal event: %v", err)
+		}
+		if strings.Contains(string(encoded), v2ContentSentinel) {
+			t.Fatalf("UsageEvent leaked content sentinel: %s", encoded)
+		}
+	}
 }
 
 // TestParseEmitsOnlyAssistantMessages covers step 4: Parse over the fixture
