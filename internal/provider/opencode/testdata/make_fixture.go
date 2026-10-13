@@ -250,6 +250,29 @@ func BuildV3WithLegacy(dir string, sessions []V2Session, messages []V2Message) (
 	return buildCurrent(dir, sessions, messages, true, "session_v3", "session_message_v3")
 }
 
+// BuildV3WithSchemaDecoys adds two newer tables to a v3 database. The inbox
+// has every old message-table discriminator except seq, while session_unrelated
+// has the session shape but cannot join the current messages. Together they
+// model the two schema-selection hazards the provider must reject.
+func BuildV3WithSchemaDecoys(dir string, sessions []V2Session, messages []V2Message) (string, error) {
+	path, err := buildCurrent(dir, sessions, messages, true, "session_v3", "session_message_v3")
+	if err != nil {
+		return "", err
+	}
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		return "", fmt.Errorf("testdata: open schema decoy fixture: %w", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("CREATE TABLE session_inbox (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, data TEXT NOT NULL, delivery TEXT NOT NULL, enqueued_seq INTEGER NOT NULL, time_created INTEGER NOT NULL); CREATE TABLE session_unrelated (id TEXT PRIMARY KEY, directory TEXT NOT NULL);"); err != nil {
+		return "", fmt.Errorf("testdata: create schema decoys: %w", err)
+	}
+	if _, err := db.Exec("INSERT INTO session_inbox (id, session_id, type, data, delivery, enqueued_seq, time_created) VALUES ('inbox_1', 'ses_v3', 'assistant', '{}', 'pending', 1, 0); INSERT INTO session_unrelated (id, directory) VALUES ('unrelated', '/home/user/projects/unrelated');"); err != nil {
+		return "", fmt.Errorf("testdata: insert schema decoys: %w", err)
+	}
+	return path, nil
+}
+
 func buildCurrent(dir string, sessions []V2Session, messages []V2Message, withLegacy bool, sessionTable, messageTable string) (string, error) {
 	path := filepath.Join(dir, "opencode.db")
 	db, err := sql.Open("sqlite", "file:"+path)
