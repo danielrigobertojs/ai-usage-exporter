@@ -28,6 +28,11 @@ not commit it.
 
 ### If the exporter does not run on the host
 
+If an existing host needs a newer exporter binary, follow the [upgrade an
+existing installation](../docs/install.md#upgrade-an-existing-installation)
+procedure first. It covers both managed services and manually started
+processes, plus verification of the running build.
+
 `deploy/prometheus/prometheus.yml` targets `host.docker.internal:9477`, which
 Docker resolves to the host IP. This works in Docker Desktop (macOS/Windows)
 and on Linux through the `extra_hosts: host-gateway` entry already present on
