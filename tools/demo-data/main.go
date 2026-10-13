@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -16,18 +17,27 @@ import (
 )
 
 func main() {
-	out := flag.String("out", "./demo-data", "directory for synthetic provider data")
-	baseFlag := flag.String("base", "", "RFC3339 timestamp anchoring generated events (default: current minute)")
-	flag.Parse()
-	base, err := parseBase(*baseFlag, time.Now())
+	if err := execute(os.Args[1:], time.Now()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// execute is the command path without process exit, so tests can exercise the
+// default timestamp all the way through generation with a fixed clock.
+func execute(args []string, now time.Time) error {
+	flags := flag.NewFlagSet("demo-data", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	out := flags.String("out", "./demo-data", "directory for synthetic provider data")
+	baseFlag := flags.String("base", "", "RFC3339 timestamp anchoring generated events (default: current minute)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	base, err := parseBase(*baseFlag, now)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return err
 	}
-	if err := run(*out, base); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	return run(*out, base)
 }
 
 // parseBase returns a minute-stable current timestamp by default, or the
