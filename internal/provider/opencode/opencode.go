@@ -165,6 +165,14 @@ func (d messageData) modelID() string {
 // type and data) but it is a delivery queue, not usage. Candidates are tried
 // as pairs because independently selecting the newest table of each family
 // can join two schema generations and quietly return no events.
+//
+// Residual risk: this selection rests on the NAME of one column. OpenCode's
+// delivery queues already carry a "*_seq" column (session_inbox.enqueued_seq,
+// session_pending.admitted_seq). A queue table that gains a column literally
+// named "seq" would satisfy both hasColumns and schemaHasAssistantRows,
+// because a queue row really does say type='assistant' and really does join
+// a session. Measured today: no other table has id+session_id+type+seq+data,
+// so this does not fire now.
 func schemaQuery(ctx context.Context, db *sql.DB) (string, error) {
 	tables, err := db.QueryContext(ctx, `
 SELECT name, rowid FROM sqlite_master
