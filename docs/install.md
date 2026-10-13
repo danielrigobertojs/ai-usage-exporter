@@ -131,12 +131,28 @@ git ls-remote https://github.com/danielrigobertojs/ai-usage-exporter.git refs/he
 To identify the newest release version instead, run:
 
 ```bash
-curl -fsSLI -o /dev/null -w '%{url_effective}\n' https://github.com/danielrigobertojs/ai-usage-exporter/releases/latest | sed 's#.*/##'
+release_json=$(curl -fsSL https://api.github.com/repos/danielrigobertojs/ai-usage-exporter/releases/latest) || {
+  echo "No GitHub release is available; build the selected commit from source instead." >&2
+  exit 1
+}
+printf '%s\n' "$release_json" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
 ```
 
 Download and verify the chosen release using the platform-specific commands
-above. Keep the expected release version or commit available for the
-verification step below.
+above. If there is no release for the commit you need, build it from source;
+`make build` records the checked-out commit in `ai_usage_build_info`:
+
+```bash
+TARGET_REF=<commit-or-tag>
+git clone https://github.com/danielrigobertojs/ai-usage-exporter.git
+cd ai-usage-exporter
+git checkout "$TARGET_REF"
+make build
+./ai-usage-exporter version
+```
+
+Keep the expected release version or commit and the path to the verified new
+binary available for the upgrade and verification steps below.
 
 ### Upgrade a managed service
 
@@ -171,30 +187,47 @@ mix a manually started exporter with a service managing the same port.
 
 ### Upgrade a manually started process
 
-First capture the exact command line and PID. Review the output before
-continuing; it can include command-line arguments that must be retained.
+Select the process by the TCP port that it serves, not by its name. This avoids
+selecting another exporter or the shell running the command. `lsof` is included
+with macOS; install it on Linux if it is not already available. Set `PORT` to
+the exporter port to upgrade, then review the exact command line before
+continuing.
 
 ```bash
-pgrep -af ai-usage-exporter
-PID=<pid-from-the-previous-command>
+PORT=9477
+PID=$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t | sort -u)
+if [ -z "$PID" ] || [ "$(printf '%s\n' "$PID" | wc -l | tr -d ' ')" -ne 1 ]; then
+  echo "Expected exactly one listener on TCP port $PORT; inspect it before continuing." >&2
+  exit 1
+fi
 old_command=$(ps -p "$PID" -o command=)
+case "$old_command" in
+  *ai-usage-exporter*) ;;
+  *) echo "PID $PID is not ai-usage-exporter; refusing to stop it." >&2; exit 1 ;;
+esac
 printf '%s\n' "$old_command"
 ```
 
-Stop that PID, replace the executable at the path reported by `command -v`,
-and relaunch the recorded command. Replace `ai-usage-exporter` with the
-verified release file you downloaded.
+Set `BINARY_PATH` to the executable path from the reviewed command line and
+`NEW_BINARY` to the verified release or source build. This also works when the
+old binary is outside `PATH`, such as `./ai-usage-exporter`. Confirm both paths
+before the process is stopped.
 
 ```bash
+BINARY_PATH=./ai-usage-exporter
+NEW_BINARY=/path/to/verified/ai-usage-exporter
+[ -f "$BINARY_PATH" ] && [ -x "$NEW_BINARY" ] || {
+  echo "Set BINARY_PATH and NEW_BINARY to existing executable files." >&2
+  exit 1
+}
 kill "$PID"
 while kill -0 "$PID" 2>/dev/null; do sleep 1; done
-install -m 0755 ai-usage-exporter "$(command -v ai-usage-exporter)"
+install -m 0755 "$NEW_BINARY" "$BINARY_PATH"
 nohup sh -c "$old_command" > ai-usage-exporter.log 2>&1 &
 ```
 
-If the prior command used a binary outside `PATH`, replace the destination in
-the `install` command with that absolute path. Keep the log outside a temporary
-directory if the process must survive a logout or restart.
+Keep the log outside a temporary directory if the process must survive a logout
+or restart.
 
 ### Verify the deployment
 
@@ -205,19 +238,28 @@ has the expected commit (or expected release version):
 curl -fsS http://127.0.0.1:9477/metrics | grep '^ai_usage_build_info{'
 ```
 
-Also verify the functional result from Prometheus. Substitute the exporter
-target and a tool/window that is known to have historical usage; for example,
-this checks that a 30-day OpenCode series is present after the upgrade:
+Also verify the functional result from Prometheus. The supported windows are
+`1h`, `24h`, `7d`, `30d`, `mtd`, and `all`; see [the metric
+reference](metrics.md) for their definitions. Substitute the exporter target
+and a tool that is known to have historical usage. This checks every window and
+fails if Prometheus returns an empty vector for any one of them:
 
 ```bash
 PROMETHEUS_URL=http://prometheus.example:9090
-curl -fsSG "$PROMETHEUS_URL/api/v1/query" \
-  --data-urlencode 'query=ai_usage_tokens{instance="exporter.example:9477",tool="opencode",window="30d"}'
+for WINDOW in 1h 24h 7d 30d mtd all; do
+  response=$(curl -fsSG "$PROMETHEUS_URL/api/v1/query" \
+    --data-urlencode "query=ai_usage_tokens{instance=\"exporter.example:9477\",tool=\"opencode\",window=\"$WINDOW\"}")
+  printf '%s\n' "$response"
+  printf '%s' "$response" | grep -q '"result":\[\]' && {
+    echo "No series returned for window $WINDOW." >&2
+    exit 1
+  }
+done
 ```
 
-The JSON response must contain a non-empty `data.result` when that host has
-matching historical usage. If it does not, choose the appropriate known tool
-and window before treating an empty result as an exporter regression.
+Each JSON response must contain a non-empty `data.result` when that host has
+matching historical usage. If a window is genuinely expected to be empty, omit
+it deliberately from the loop rather than treating an empty result as success.
 
 ### If the host or exporter does not respond
 
