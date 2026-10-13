@@ -47,6 +47,20 @@ func TestGeneratedEventsAreVisibleInRecentWindows(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	assertRecentGeneratedEvents(t, out, now)
+}
+
+func TestExecuteDefaultGeneratesRecentEvents(t *testing.T) {
+	now := time.Date(2026, 10, 13, 18, 41, 20, 0, time.UTC)
+	out := t.TempDir()
+	if err := execute([]string{"-out", out}, now); err != nil {
+		t.Fatal(err)
+	}
+	assertRecentGeneratedEvents(t, out, now.Truncate(time.Minute))
+}
+
+func assertRecentGeneratedEvents(t *testing.T, out string, now time.Time) {
+	t.Helper()
 	timestamps := generatedTimestamps(t, out)
 	if len(timestamps) != 18 {
 		t.Fatalf("timestamps = %d, want 18", len(timestamps))
