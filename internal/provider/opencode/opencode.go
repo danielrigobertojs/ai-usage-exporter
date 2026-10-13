@@ -214,7 +214,11 @@ ORDER BY rowid DESC`)
 			}
 		}
 	}
-	return legacyQuery, nil
+	// Current-shaped tables exist but contain no joinable assistant row yet.
+	// This is normal directly after a migration; returning legacy here would
+	// replay historical usage as if it belonged to the new generation. The
+	// newest pair preserves the empty current snapshot until data arrives.
+	return fmt.Sprintf(currentQuery, quoteIdentifier(messages[0].name), quoteIdentifier(sessions[0].name)), nil
 }
 
 // schemaHasAssistantRows verifies a candidate table pair before it becomes

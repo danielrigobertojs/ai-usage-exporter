@@ -119,6 +119,29 @@ func buildV3WithSchemaDecoysFixture(t *testing.T) string {
 	return path
 }
 
+func buildMigratedButIdleFixture(t *testing.T) string {
+	t.Helper()
+	path, err := testdata.Build(t.TempDir(),
+		[]testdata.Session{{ID: "ses_legacy", Directory: "/home/user/projects/legacy"}},
+		[]testdata.Message{{ID: "msg_legacy", SessionID: "ses_legacy", Data: `{"role":"assistant","modelID":"old-model","time":{"created":1700000000000},"tokens":{"input":500,"output":300,"reasoning":100}}`}},
+	)
+	if err != nil {
+		t.Fatalf("build legacy fixture: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open migrated fixture: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+CREATE TABLE session_v3 (id TEXT PRIMARY KEY, directory TEXT NOT NULL);
+CREATE TABLE session_message_v3 (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
+INSERT INTO session_v3 (id, directory) VALUES ('ses_v3', '/home/user/projects/v3');`); err != nil {
+		t.Fatalf("create empty current generation: %v", err)
+	}
+	return path
+}
+
 func TestParseSchemaGenerations(t *testing.T) {
 	legacy := buildFixture(t)
 	v2 := buildV2Fixture(t, false)
@@ -137,7 +160,7 @@ func TestParseSchemaGenerations(t *testing.T) {
 		{name: "v2", path: v2, messageID: "v2_assistant", model: "space-bunny-free", toolCalls: 1},
 		{name: "both generations prefer v2", path: both, messageID: "v2_assistant", model: "space-bunny-free", toolCalls: 1},
 		{name: "renamed current generation prefers v3 over legacy", path: v3, messageID: "v3_assistant", model: "space-bunny-v3", toolCalls: 1},
-		{name: "ignores inbox lookalike and retries mismatched session candidate", path: v3WithSchemaDecoys, messageID: "v3_assistant", model: "space-bunny-v3", toolCalls: 1},
+		{name: "ignores inbox and pending queue lookalikes and retries mismatched session candidate", path: v3WithSchemaDecoys, messageID: "v3_assistant", model: "space-bunny-v3", toolCalls: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -162,6 +185,25 @@ func TestParseSchemaGenerations(t *testing.T) {
 				t.Errorf("event = model %q, tool calls %d; want %q, %d", got.Model, got.ToolCalls, tt.model, tt.toolCalls)
 			}
 		})
+	}
+}
+
+func TestParseCurrentButIdleDoesNotReplayLegacy(t *testing.T) {
+	path := buildMigratedButIdleFixture(t)
+	db, err := sql.Open("sqlite", DSN(path))
+	if err != nil {
+		t.Fatalf("open fixture: %v", err)
+	}
+	defer db.Close()
+	query, err := schemaQuery(context.Background(), db)
+	if err != nil {
+		t.Fatalf("schemaQuery: %v", err)
+	}
+	if query == legacyQuery {
+		t.Fatal("schemaQuery selected legacy history for an empty current generation")
+	}
+	if events := parseAll(t, path); len(events) != 0 {
+		t.Fatalf("Parse emitted %d legacy events for an empty current generation", len(events))
 	}
 }
 
