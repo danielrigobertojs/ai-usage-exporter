@@ -1,0 +1,16 @@
+# Override de captura sobre deploy/docker-compose.yml. Solo cambia puertos de
+# host y el config de Prometheus; las imagenes y el provisioning son los del
+# repo, para que la captura muestre lo que ve un usuario de verdad.
+# `!override` es necesario porque compose fusiona `ports` por append: sin el,
+# Grafana seguiria pidiendo el 3000 del compose base.
+services:
+  prometheus:
+    volumes: !override
+      # rutas relativas al directorio del compose BASE (deploy/), no al override
+      - ../tools/demo-data/capture/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: !override
+      - "19091:9090"
+
+  grafana:
+    ports: !override
+      - "13000:3000"
