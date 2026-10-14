@@ -250,10 +250,10 @@ for WINDOW in 1h 24h 7d 30d mtd all; do
   response=$(curl -fsSG "$PROMETHEUS_URL/api/v1/query" \
     --data-urlencode "query=ai_usage_tokens{instance=\"exporter.example:9477\",tool=\"opencode\",window=\"$WINDOW\"}")
   printf '%s\n' "$response"
-  printf '%s' "$response" | grep -q '"result":\[\]' && {
+  if printf '%s' "$response" | grep -q '"result":\[\]'; then
     echo "No series returned for window $WINDOW." >&2
     exit 1
-  }
+  fi
 done
 ```
 
