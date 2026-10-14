@@ -14,7 +14,7 @@ file) discards any candidate that exceeds it, and `MaxTotalBytes`
 surpasses them.
 
 Measured on 2026-10-07 on `main` at `f737887` (with JCB-321 and JCB-322 already
-merged) against the actual data of `Daniels-MBP.lan`:
+merged) against the actual data of `exporter.example`:
 
 ```
 claude-code  files=30   skipped=0   events=2507    tokens=309451691   parse_errors=0

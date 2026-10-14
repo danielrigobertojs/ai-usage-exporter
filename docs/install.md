@@ -47,10 +47,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now ai-usage-exporter.service
 ```
 
-The service has `Restart=on-failure`. El exporter reescanea el historial
-full scan every 60 seconds by default; you do not need the refresh timer to
-tener datos vivos. Si prefieres un snapshot congelado, configura
-`AI_USAGE_SCAN_INTERVAL=0` en la unidad principal.
+The service has `Restart=on-failure`. The exporter rescans the history every
+60 seconds by default; you do not need the refresh timer for live data. If you
+prefer a frozen snapshot, set `AI_USAGE_SCAN_INTERVAL=0` in the main unit.
 
 ## Windows
 
