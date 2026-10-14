@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -16,22 +17,49 @@ import (
 )
 
 func main() {
-	out := flag.String("out", "./demo-data", "directory for synthetic provider data")
-	flag.Parse()
-	if err := run(*out); err != nil {
+	if err := execute(os.Args[1:], time.Now()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(out string) error {
+// execute is the command path without process exit, so tests can exercise the
+// default timestamp all the way through generation with a fixed clock.
+func execute(args []string, now time.Time) error {
+	flags := flag.NewFlagSet("demo-data", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	out := flags.String("out", "./demo-data", "directory for synthetic provider data")
+	baseFlag := flags.String("base", "", "RFC3339 timestamp anchoring generated events (default: current minute)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	base, err := parseBase(*baseFlag, now)
+	if err != nil {
+		return err
+	}
+	return run(*out, base)
+}
+
+// parseBase returns a minute-stable current timestamp by default, or the
+// explicit RFC3339 anchor requested for reproducible fixtures.
+func parseBase(raw string, now time.Time) (time.Time, error) {
+	if raw == "" {
+		return now.UTC().Truncate(time.Minute), nil
+	}
+	base, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse -base: %w", err)
+	}
+	return base.UTC(), nil
+}
+
+func run(out string, base time.Time) error {
 	if err := os.MkdirAll(filepath.Join(out, ".claude", "projects", "project-alpha"), 0o755); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Join(out, ".codex", "sessions", "2026", "10", "11"), 0o755); err != nil {
 		return err
 	}
-	base := time.Date(2026, 10, 11, 20, 0, 0, 0, time.UTC)
 	claude := filepath.Join(out, ".claude", "projects", "project-alpha", "demo-claude.jsonl")
 	cf, err := os.Create(claude)
 	if err != nil {
