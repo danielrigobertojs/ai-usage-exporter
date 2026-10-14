@@ -7,6 +7,35 @@ Codex CLI, OpenCode y otros): tokens, modelos, sesiones y coste leídos
 directamente de los logs locales de cada herramienta y expuestos en un endpoint
 HTTP `/metrics`.
 
+### Cómo se ve
+
+Todas las capturas de abajo están generadas a partir de los datos sintéticos de
+[`tools/demo-data`](tools/demo-data). Ningún nombre de host real, ninguna cifra
+de gasto real y ningún log real llega a estas imágenes, y
+[`tools/demo-data/capture`](tools/demo-data/capture/README.md) documenta cómo
+volver a generarlas.
+
+![Panel de Grafana con tokens y coste de la última hora, de datos sintéticos](docs/images/dashboard-live.png)
+
+*Tokens y coste de la última hora: lo que estás gastando ahora mismo.*
+
+![Serie temporal de Grafana con tokens por máquina de dos hosts sintéticos](docs/images/dashboard-by-instance.png)
+
+*Tokens por máquina. Toda la flota en un panel.*
+
+![Gráfico de barras de Grafana con el coste desglosado por modelo](docs/images/dashboard-cost-by-model.png)
+
+*En qué modelo se va el dinero.*
+
+![Gráfico de barras de Grafana con tokens por clase: input, output y caché](docs/images/dashboard-token-classes.png)
+
+*Input frente a output y caché. La parte de caché es el ahorro que casi nadie ve.*
+
+![Tabla de Grafana con ficheros, errores y disponibilidad por máquina y proveedor](docs/images/dashboard-health.png)
+
+*Salud del exporter: ficheros, errores y disponibilidad por máquina y proveedor.*
+
+
 ### Estado del proyecto
 
 El binario escanea los proveedores registrados y sirve `/metrics`. Incluye:

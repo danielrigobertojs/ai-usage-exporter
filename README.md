@@ -6,6 +6,35 @@ Go Prometheus exporter for local AI-agent usage (Claude Code, Codex CLI,
 OpenCode, and others): tokens, models, sessions, and cost read directly from
 each tool's local logs and exposed on an HTTP endpoint `/metrics`.
 
+### What it looks like
+
+Every screenshot below is rendered from the synthetic data that ships in
+[`tools/demo-data`](tools/demo-data). No real host name, no real spend and no
+real log ever reaches these images, and
+[`tools/demo-data/capture`](tools/demo-data/capture/README.md) documents how to
+regenerate them.
+
+![Grafana panel showing tokens and cost for the last hour, from synthetic demo data](docs/images/dashboard-live.png)
+
+*Tokens and cost over the last hour: what you are spending right now.*
+
+![Grafana time series splitting tokens per machine across two synthetic hosts](docs/images/dashboard-by-instance.png)
+
+*Tokens per machine. The whole fleet in one panel.*
+
+![Grafana bar chart breaking down cost by model](docs/images/dashboard-cost-by-model.png)
+
+*Which model the money goes to.*
+
+![Grafana bar chart splitting tokens into input, output and cache classes](docs/images/dashboard-token-classes.png)
+
+*Input vs output vs cache. The cache share is the saving you rarely see.*
+
+![Grafana table listing files, errors and availability per machine and provider](docs/images/dashboard-health.png)
+
+*Exporter health: files, errors and availability per machine and provider.*
+
+
 ### Project status
 
 The binary scans registered providers and serves `/metrics`. It includes:
