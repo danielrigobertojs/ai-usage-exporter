@@ -66,6 +66,17 @@ persistent state.
   `token_type` form an open set in practice; inventing their empty combinations
   would increase cardinality without a useful bound.
 
+#### Schema migrations and `window="all"`
+
+Some providers retain an earlier schema generation beside the current one.
+For a message identity found in more than one generation, the newest
+generation is authoritative: generations are **not** combined. In particular,
+`window="all"` represents the history of the selected generation available at
+scan time, not a union of every historical table left by a migration. Its value
+for one provider can therefore decrease after an upstream migration if the
+current generation contains less history; that is not, by itself, a metrics
+regression. See [ADR-009](adr/0009-opencode-schema-generation-authority.md).
+
 #### Invariant: `token_type` classes are disjoint
 
 The five `token_type` classes partition an event's tokens: every token is
