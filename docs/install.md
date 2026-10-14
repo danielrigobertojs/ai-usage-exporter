@@ -200,29 +200,34 @@ if [ -z "$PID" ] || [ "$(printf '%s\n' "$PID" | wc -l | tr -d ' ')" -ne 1 ]; the
   exit 1
 fi
 old_command=$(ps -p "$PID" -o command=)
+cwd=$(lsof -n -p "$PID" -a -d cwd -Fn | sed -n 's/^n//p' | head -n 1)
 case "$old_command" in
   *ai-usage-exporter*) ;;
   *) echo "PID $PID is not ai-usage-exporter; refusing to stop it." >&2; exit 1 ;;
 esac
-printf '%s\n' "$old_command"
-```
-
-Set `BINARY_PATH` to the executable path from the reviewed command line and
-`NEW_BINARY` to the verified release or source build. This also works when the
-old binary is outside `PATH`, such as `./ai-usage-exporter`. Confirm both paths
-before the process is stopped.
-
-```bash
-BINARY_PATH=./ai-usage-exporter
-NEW_BINARY=/path/to/verified/ai-usage-exporter
-[ -f "$BINARY_PATH" ] && [ -x "$NEW_BINARY" ] || {
-  echo "Set BINARY_PATH and NEW_BINARY to existing executable files." >&2
+executable=${old_command%%[[:space:]]*}
+case "$executable" in
+  ./*) BINARY_PATH="$cwd/${executable#./}" ;;
+  /*) BINARY_PATH="$executable" ;;
+  *) echo "Cannot resolve an absolute exporter path from: $old_command" >&2; exit 1 ;;
+esac
+[ -n "$cwd" ] && [ -x "$BINARY_PATH" ] || {
+  echo "Could not resolve the listener cwd and executable; refusing to stop it." >&2
   exit 1
 }
-kill "$PID"
-while kill -0 "$PID" 2>/dev/null; do sleep 1; done
-install -m 0755 "$NEW_BINARY" "$BINARY_PATH"
-nohup sh -c "$old_command" > ai-usage-exporter.log 2>&1 &
+printf 'PID=%s\nCWD=%s\nBINARY_PATH=%s\nCOMMAND=%s\n' "$PID" "$cwd" "$BINARY_PATH" "$old_command"
+```
+
+Set `NEW_BINARY` to the verified release or source build and run the helper.
+The detection step above resolves `BINARY_PATH` to an absolute path, including
+when the process was launched as `./ai-usage-exporter`. The helper repeats that
+check immediately before stopping the process, installs only at that absolute
+path, and relaunches with it. This prevents an operator's current directory
+from selecting or overwriting another binary with the same name.
+
+```bash
+NEW_BINARY=/path/to/verified/ai-usage-exporter
+bash scripts/upgrade-exporter.sh --port "$PORT" --new-binary "$NEW_BINARY"
 ```
 
 Keep the log outside a temporary directory if the process must survive a logout
@@ -230,8 +235,9 @@ or restart.
 
 ### Verify the deployment
 
-Wait briefly for the exporter to start, then confirm that the running metric
-has the expected commit (or expected release version):
+The helper confirms that the listener after restart resolves to the installed
+absolute path. Then confirm that the running metric has the expected commit (or
+expected release version):
 
 ```bash
 curl -fsS http://127.0.0.1:9477/metrics | grep '^ai_usage_build_info{'
