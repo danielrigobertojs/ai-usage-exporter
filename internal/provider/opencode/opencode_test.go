@@ -207,6 +207,78 @@ func TestParseCurrentButIdleDoesNotReplayLegacy(t *testing.T) {
 	}
 }
 
+// TestParseSchemaGenerationAuthority keeps schema migration from becoming a
+// union. OpenCode keeps legacy rows after migration, including rows with the
+// same message IDs and token payload as the current generation. Counting both
+// would silently double usage; legacy-only rows are deliberately not replayed.
+func TestParseSchemaGenerationAuthority(t *testing.T) {
+	const sharedData = `{"role":"assistant","time":{"created":1791804042674},"model":{"id":"current-model","providerID":"opencode"},"tokens":{"total":18,"input":10,"output":3,"reasoning":5,"cache":{"read":0,"write":0}}}`
+
+	tests := []struct {
+		name           string
+		legacyMessages []testdata.Message
+	}{
+		{
+			name: "shared message is counted from current generation once",
+			legacyMessages: []testdata.Message{
+				{ID: "shared", SessionID: "ses_legacy", Data: sharedData},
+			},
+		},
+		{
+			name: "legacy-only history does not extend current generation",
+			legacyMessages: []testdata.Message{
+				{ID: "shared", SessionID: "ses_legacy", Data: sharedData},
+				{ID: "legacy_only", SessionID: "ses_legacy", Data: `{"role":"assistant","time":{"created":1700000000000},"modelID":"legacy-model","tokens":{"total":800,"input":500,"output":200,"reasoning":100,"cache":{"read":0,"write":0}}}`},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path, err := testdata.BuildBoth(t.TempDir(),
+				[]testdata.V2Session{{ID: "ses_current", Directory: "/home/user/projects/current"}},
+				[]testdata.V2Message{{ID: "shared", SessionID: "ses_current", Type: "assistant", Data: sharedData}},
+			)
+			if err != nil {
+				t.Fatalf("build migrated fixture: %v", err)
+			}
+
+			db, err := sql.Open("sqlite", "file:"+path)
+			if err != nil {
+				t.Fatalf("open migrated fixture: %v", err)
+			}
+			if _, err := db.Exec(`INSERT INTO session (id, directory) VALUES ('ses_legacy', '/home/user/projects/legacy')`); err != nil {
+				db.Close()
+				t.Fatalf("insert legacy session: %v", err)
+			}
+			for _, message := range tt.legacyMessages {
+				if _, err := db.Exec(`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, 0, 0, ?)`, message.ID, message.SessionID, message.Data); err != nil {
+					db.Close()
+					t.Fatalf("insert legacy message %q: %v", message.ID, err)
+				}
+			}
+			if err := db.Close(); err != nil {
+				t.Fatalf("close migrated fixture: %v", err)
+			}
+
+			events := parseAll(t, path)
+			if len(events) != 1 {
+				t.Fatalf("Parse emitted %d events, want only the current shared event", len(events))
+			}
+			if events[0].Key.MessageID != "shared" {
+				t.Fatalf("message ID = %q, want shared", events[0].Key.MessageID)
+			}
+			var tokens int64
+			for _, count := range events[0].Tokens {
+				tokens += count
+			}
+			if tokens != 18 {
+				t.Errorf("current-generation tokens = %d, want 18; a union would inflate this total", tokens)
+			}
+		})
+	}
+}
+
 // TestParseV2ContentIsNeverDecoded protects the v2 privacy boundary. The
 // test fails both if content is added to messageData and if any emitted event
 // acquires a route for that literal model-reasoning text.
