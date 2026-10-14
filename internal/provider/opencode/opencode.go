@@ -25,7 +25,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -161,9 +160,19 @@ func (d messageData) modelID() string {
 // schemaQuery selects a current schema by its columns, not its table names.
 // OpenCode leaves old tables behind during migrations, so falling back to
 // legacy merely because a future generation is not called session_v2 would
-// publish stale history. The newest compatible tables are the active schema;
-// sqlite_master.rowid reflects their creation order and avoids scanning any
-// message rows merely to make this selection.
+// publish stale history. A current message table additionally has seq:
+// session_inbox is deliberately close to a message table (id, session_id,
+// type and data) but it is a delivery queue, not usage. Candidates are tried
+// as pairs because independently selecting the newest table of each family
+// can join two schema generations and quietly return no events.
+//
+// Residual risk: this selection rests on the NAME of one column. OpenCode's
+// delivery queues already carry a "*_seq" column (session_inbox.enqueued_seq,
+// session_pending.admitted_seq). A queue table that gains a column literally
+// named "seq" would satisfy both hasColumns and schemaHasAssistantRows,
+// because a queue row really does say type='assistant' and really does join
+// a session. Measured today: no other table has id+session_id+type+seq+data,
+// so this does not fire now.
 func schemaQuery(ctx context.Context, db *sql.DB) (string, error) {
 	tables, err := db.QueryContext(ctx, `
 SELECT name, rowid FROM sqlite_master
@@ -191,7 +200,7 @@ ORDER BY rowid DESC`)
 		if hasColumns(columns, "id", "directory") {
 			sessions = append(sessions, table)
 		}
-		if hasColumns(columns, "id", "session_id", "type", "data") {
+		if hasColumns(columns, "id", "session_id", "type", "seq", "data") {
 			messages = append(messages, table)
 		}
 	}
@@ -201,9 +210,43 @@ ORDER BY rowid DESC`)
 	if len(sessions) == 0 || len(messages) == 0 {
 		return legacyQuery, nil
 	}
-	sort.Slice(sessions, func(i, j int) bool { return sessions[i].rowID > sessions[j].rowID })
-	sort.Slice(messages, func(i, j int) bool { return messages[i].rowID > messages[j].rowID })
+	for _, message := range messages {
+		for _, session := range sessions {
+			query := fmt.Sprintf(currentQuery, quoteIdentifier(message.name), quoteIdentifier(session.name))
+			ok, err := schemaHasAssistantRows(ctx, db, message.name, session.name)
+			if err != nil {
+				return "", err
+			}
+			if ok {
+				return query, nil
+			}
+		}
+	}
+	// Current-shaped tables exist but contain no joinable assistant row yet.
+	// This is normal directly after a migration; returning legacy here would
+	// replay historical usage as if it belonged to the new generation. The
+	// newest pair preserves the empty current snapshot until data arrives.
 	return fmt.Sprintf(currentQuery, quoteIdentifier(messages[0].name), quoteIdentifier(sessions[0].name)), nil
+}
+
+// schemaHasAssistantRows verifies a candidate table pair before it becomes
+// authoritative. The projected fields intentionally match currentQuery's
+// relationship and assistant discriminator, but never read message.data.
+func schemaHasAssistantRows(ctx context.Context, db *sql.DB, messageTable, sessionTable string) (bool, error) {
+	query := fmt.Sprintf(`
+SELECT 1
+FROM %s m JOIN %s s ON s.id = m.session_id
+WHERE m.type = 'assistant'
+LIMIT 1`, quoteIdentifier(messageTable), quoteIdentifier(sessionTable))
+	var one int
+	err := db.QueryRowContext(ctx, query).Scan(&one)
+	if err == nil {
+		return true, nil
+	}
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return false, err
 }
 
 func tableColumns(ctx context.Context, db *sql.DB, table string) (map[string]struct{}, error) {
