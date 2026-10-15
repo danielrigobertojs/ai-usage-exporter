@@ -123,7 +123,7 @@ func buildMigratedButIdleFixture(t *testing.T) string {
 	t.Helper()
 	path, err := testdata.Build(t.TempDir(),
 		[]testdata.Session{{ID: "ses_legacy", Directory: "/home/user/projects/legacy"}},
-		[]testdata.Message{{ID: "msg_legacy", SessionID: "ses_legacy", Data: `{"role":"assistant","modelID":"old-model","time":{"created":1700000000000},"tokens":{"input":500,"output":300,"reasoning":100}}`}},
+		[]testdata.Message{{ID: "msg_legacy", SessionID: "ses_legacy", Data: `{"role":"user","time":{"created":1700000000000}}`}},
 	)
 	if err != nil {
 		t.Fatalf("build legacy fixture: %v", err)
@@ -142,14 +142,14 @@ INSERT INTO session_v3 (id, directory) VALUES ('ses_v3', '/home/user/projects/v3
 	return path
 }
 
-// buildPreMigrationFixture mirrors macmini's observed schema: the new table
-// shape exists but has never received a row, while the legacy message table
-// is still the actively written source of assistant usage.
+// buildPreMigrationFixture mirrors macmini's observed schema with the
+// additional edge case of a newer current user row. The user row must not
+// hide legacy assistant usage while the migration is incomplete.
 func buildPreMigrationFixture(t *testing.T) string {
 	t.Helper()
 	path, err := testdata.BuildBoth(t.TempDir(),
 		[]testdata.V2Session{{ID: "ses_current", Directory: "/home/user/projects/current"}},
-		nil,
+		[]testdata.V2Message{{ID: "current_user", SessionID: "ses_current", Type: "user", Data: `{"time":{"created":1760547280000}}`}},
 	)
 	if err != nil {
 		t.Fatalf("build current-shaped fixture: %v", err)
@@ -159,12 +159,17 @@ func buildPreMigrationFixture(t *testing.T) string {
 		t.Fatalf("open pre-migration fixture: %v", err)
 	}
 	defer db.Close()
-	const writtenAt = 1760547279000
+	const (
+		legacyWrittenAt  = 1760547279000
+		currentWrittenAt = legacyWrittenAt + 1
+	)
 	if _, err := db.Exec(`
 INSERT INTO session (id, directory) VALUES ('ses_legacy', '/home/user/projects/legacy');
 INSERT INTO message (id, session_id, time_created, time_updated, data)
-VALUES ('legacy_live', 'ses_legacy', ?, ?, ?);`, writtenAt, writtenAt,
+VALUES ('legacy_live', 'ses_legacy', ?, ?, ?);
+UPDATE session_message SET time_created = ?, time_updated = ? WHERE id = 'current_user';`, legacyWrittenAt, legacyWrittenAt,
 		`{"role":"assistant","modelID":"legacy-live-model","time":{"created":1760547279000},"tokens":{"input":10,"output":5,"reasoning":1,"cache":{"read":20,"write":0}}}`,
+		currentWrittenAt, currentWrittenAt,
 	); err != nil {
 		t.Fatalf("insert live legacy message: %v", err)
 	}
@@ -229,18 +234,18 @@ func TestParseCurrentButIdleDoesNotReplayLegacy(t *testing.T) {
 		t.Fatalf("schemaQuery: %v", err)
 	}
 	if query == legacyQuery {
-		t.Fatal("schemaQuery selected legacy history for an empty current generation")
+		t.Fatal("schemaQuery selected legacy without any assistant usage")
 	}
 	if events := parseAll(t, path); len(events) != 0 {
-		t.Fatalf("Parse emitted %d legacy events for an empty current generation", len(events))
+		t.Fatalf("Parse emitted %d events without assistant usage", len(events))
 	}
 }
 
-// TestParsePreMigrationUsesRecentlyWrittenLegacyGeneration is the regression
-// case observed on macmini: session_message has the current shape but zero
-// rows, whereas message contains newer assistant usage. Before JCB-353 this
-// returned no events because the empty current-shaped table won by its name.
-func TestParsePreMigrationUsesRecentlyWrittenLegacyGeneration(t *testing.T) {
+// TestParsePreMigrationUsesLegacyAssistantGeneration is the regression
+// case observed on macmini: session_message has the current shape but no
+// assistant row, whereas message contains assistant usage. The newer current
+// user row proves that physical write recency is not a valid authority rule.
+func TestParsePreMigrationUsesLegacyAssistantGeneration(t *testing.T) {
 	events := parseAll(t, buildPreMigrationFixture(t))
 	if len(events) != 1 {
 		t.Fatalf("Parse emitted %d events, want live legacy event", len(events))
