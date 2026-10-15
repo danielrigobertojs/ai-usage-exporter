@@ -274,6 +274,88 @@ func BuildV3WithSchemaDecoys(dir string, sessions []V2Session, messages []V2Mess
 	return path, nil
 }
 
+// BuildLiveLegacyWithEmptyCurrentPair reproduces the opencode.db shape found
+// on a fleet host whose OpenCode migration had created session_message without
+// ever populating it (JCB-353). Measured on that host 2026-10-15: `message`
+// held 3005 rows, 2842 of them assistant, last written 10:54:39 that same day;
+// `session_message` existed with the current column set and ZERO rows.
+//
+// The `message` and `session_message` schemas are copied verbatim from that
+// database's `.schema` output, including session_message's inline `seq`
+// column. `session` is reduced to the two columns the provider reads, as Build
+// does, because the real table carries two dozen more that no query selects.
+//
+// legacyUpdatedAt is written to message.time_created and message.time_updated
+// so a test can tell a live legacy table from a frozen post-migration copy.
+// That distinction is the whole discriminator: on the measured host the rows
+// the provider skipped were not history, they were the present.
+func BuildLiveLegacyWithEmptyCurrentPair(dir string, sessions []Session, messages []Message, parts []Part, legacyUpdatedAt int64) (string, error) {
+	path := filepath.Join(dir, "opencode.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		return "", fmt.Errorf("testdata: open %s: %w", path, err)
+	}
+	defer db.Close()
+
+	const schema = "" +
+		"CREATE TABLE session (\n" +
+		"\tid        TEXT PRIMARY KEY,\n" +
+		"\tdirectory TEXT NOT NULL\n" +
+		");\n" +
+		"CREATE TABLE `message` (\n" +
+		"\t`id` text PRIMARY KEY,\n" +
+		"\t`session_id` text NOT NULL,\n" +
+		"\t`time_created` integer NOT NULL,\n" +
+		"\t`time_updated` integer NOT NULL,\n" +
+		"\t`data` text NOT NULL,\n" +
+		"\tCONSTRAINT `fk_message_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n" +
+		");\n" +
+		"CREATE INDEX `message_session_time_created_id_idx` ON `message` (`session_id`,`time_created`,`id`);\n" +
+		"CREATE TABLE `part` (\n" +
+		"\t`id` text PRIMARY KEY,\n" +
+		"\t`message_id` text NOT NULL,\n" +
+		"\t`session_id` text NOT NULL,\n" +
+		"\t`time_created` integer NOT NULL,\n" +
+		"\t`time_updated` integer NOT NULL,\n" +
+		"\t`data` text NOT NULL\n" +
+		");\n" +
+		"CREATE TABLE `session_message` (\n" +
+		"          `id` text PRIMARY KEY,\n" +
+		"          `session_id` text NOT NULL,\n" +
+		"          `type` text NOT NULL,\n" +
+		"          `time_created` integer NOT NULL,\n" +
+		"          `time_updated` integer NOT NULL,\n" +
+		"          `data` text NOT NULL, `seq` integer NOT NULL,\n" +
+		"          CONSTRAINT `fk_session_message_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n" +
+		"        );"
+	if _, err := db.Exec(schema); err != nil {
+		return "", fmt.Errorf("testdata: create live-legacy schema: %w", err)
+	}
+
+	for _, s := range sessions {
+		if _, err := db.Exec(`INSERT INTO session (id, directory) VALUES (?, ?)`, s.ID, s.Directory); err != nil {
+			return "", fmt.Errorf("testdata: insert session %s: %w", s.ID, err)
+		}
+	}
+	for _, m := range messages {
+		if _, err := db.Exec(
+			`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)`,
+			m.ID, m.SessionID, legacyUpdatedAt, legacyUpdatedAt, m.Data,
+		); err != nil {
+			return "", fmt.Errorf("testdata: insert message %s: %w", m.ID, err)
+		}
+	}
+	for _, p := range parts {
+		if _, err := db.Exec(
+			`INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)`,
+			p.ID, p.MessageID, p.SessionID, legacyUpdatedAt, legacyUpdatedAt, p.Data,
+		); err != nil {
+			return "", fmt.Errorf("testdata: insert part %s: %w", p.ID, err)
+		}
+	}
+	return path, nil
+}
+
 func buildCurrent(dir string, sessions []V2Session, messages []V2Message, withLegacy bool, sessionTable, messageTable string) (string, error) {
 	path := filepath.Join(dir, "opencode.db")
 	db, err := sql.Open("sqlite", "file:"+path)

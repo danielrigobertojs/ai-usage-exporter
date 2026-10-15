@@ -279,6 +279,85 @@ func TestParseSchemaGenerationAuthority(t *testing.T) {
 	}
 }
 
+// TestParseSelectsLiveGenerationNotNewestShapedPair pins the JCB-353 failure:
+// a fleet host whose OpenCode migration had created session_message without
+// ever populating it published zero OpenCode usage while provider_available=1,
+// scan_errors=0, scan_success=1 and up=1, and its last non-zero sample sat in
+// the same second as the final scrape of the previous binary. The provider
+// picked session_message because of its columns, not because of the rows it
+// holds, so the 2842 assistant rows sitting in `message` were invisible.
+//
+// Both cases build the same database - the measured shape - and differ only
+// in how recently the legacy table was written. That is what separates "the
+// migration has not populated the new table yet, keep the empty snapshot" from
+// "those rows are not history, they are the present". The second case is the
+// guard that TestParseCurrentButIdleDoesNotReplayLegacy already provides for
+// the v3-shaped fixture, restated for this shape so a fix cannot satisfy one
+// by breaking the other.
+func TestParseSelectsLiveGenerationNotNewestShapedPair(t *testing.T) {
+	const (
+		// Real message.time_updated from the affected host, 2026-10-15 10:54:39.
+		fresh = int64(1792083279751)
+		// 2023-11-14: a post-migration frozen copy, not live usage.
+		stale = int64(1700000000000)
+	)
+	// The verbatim tokens block of the real row this fixture is derived from,
+	// including the absent tokens.total seen on 673/18423 assistant rows.
+	// path.cwd and path.root are REDACTED; Parse must never decode them.
+	const assistant = `{"role":"assistant","modelID":"space-bunny-free","providerID":"opencode","time":{"created":1792083259044},"path":{"cwd":"REDACTED","root":"REDACTED"},"tokens":{"input":16541,"output":1059,"reasoning":1,"cache":{"read":478,"write":0}},"cost":0}`
+
+	tests := []struct {
+		name            string
+		legacyUpdatedAt int64
+		wantEvents      int
+	}{
+		{
+			name:            "live legacy table is not hidden by an empty current pair",
+			legacyUpdatedAt: fresh,
+			wantEvents:      1,
+		},
+		{
+			name:            "frozen legacy table after migration stays unreplayed",
+			legacyUpdatedAt: stale,
+			wantEvents:      0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path, err := testdata.BuildLiveLegacyWithEmptyCurrentPair(
+				t.TempDir(),
+				[]testdata.Session{{ID: "ses_live", Directory: "REDACTED"}},
+				[]testdata.Message{{ID: "msg_live", SessionID: "ses_live", Data: assistant}},
+				nil,
+				tt.legacyUpdatedAt,
+			)
+			if err != nil {
+				t.Fatalf("testdata.BuildLiveLegacyWithEmptyCurrentPair: %v", err)
+			}
+
+			events := parseAll(t, path)
+			if len(events) != tt.wantEvents {
+				t.Fatalf("Parse emitted %d events, want %d; session_message is empty in this shape, so any zero here means the live generation was skipped", len(events), tt.wantEvents)
+			}
+			if tt.wantEvents == 0 {
+				return
+			}
+			if events[0].Key.MessageID != "msg_live" {
+				t.Fatalf("message ID = %q, want msg_live", events[0].Key.MessageID)
+			}
+			var tokens int64
+			for _, count := range events[0].Tokens {
+				tokens += count
+			}
+			// 16541 input + 1059 output + 1 reasoning + 478 cache read.
+			if tokens != 18079 {
+				t.Errorf("tokens = %d, want 18079", tokens)
+			}
+		})
+	}
+}
+
 // TestParseV2ContentIsNeverDecoded protects the v2 privacy boundary. The
 // test fails both if content is added to messageData and if any emitted event
 // acquires a route for that literal model-reasoning text.
