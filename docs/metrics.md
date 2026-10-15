@@ -28,6 +28,13 @@ of dead series that Prometheus never needs again after the scan that generated
 them. If data needs session-level granularity, it belongs in logs (`log/slog`),
 never in a label.
 
+Diagnostic metrics carry their own closed label sets, which do not extend the
+contract above and must never appear on a usage series: `version`, `commit`,
+and `go_version` on `ai_usage_build_info`, and `reason` on
+`ai_usage_provider_stale`. A diagnostic label is admissible only when its value
+set is closed and owned by this exporter — enumerable from our own source, not
+from the data a provider happens to contain.
+
 `project` is **opt-in and disabled by default** (`labels.project: false` in
 the configuration). When enabled, its value is normalized and **truncated to
 48 characters**; the full on-disk project path is never used.
@@ -50,6 +57,18 @@ calculate its impact on this multiplication before it is accepted. The `1h`
 window adds 750 series (+20%) over the original five windows; it is accepted
 because it enables monitoring of recent usage without introducing labels or
 persistent state.
+
+Diagnostic series are counted against the same bound. `ai_usage_provider_stale`
+materializes its closed `reason` axis for every available provider:
+
+```
+5 tools x 3 reasons = 15 series   (+0.33% of the 4,500 bound)
+```
+
+It is accepted because the reason set is closed in our own source, it is the
+only query-side signal that a provider read its source and parsed nothing, and
+it adds no label to any usage series. See
+[ADR-010](adr/0010-provider-liveness-metric.md).
 
 ## Metrics
 
@@ -76,6 +95,13 @@ scan time, not a union of every historical table left by a migration. Its value
 for one provider can therefore decrease after an upstream migration if the
 current generation contains less history; that is not, by itself, a metrics
 regression. See [ADR-009](adr/0009-opencode-schema-generation-authority.md).
+
+A generation change that truncates the history **to zero** is reported by
+`ai_usage_provider_stale{reason="no_usage_events"}`. A truncation to a smaller
+non-zero total is indistinguishable from genuinely reduced usage, by design:
+both are a correct reading of the authoritative generation. Correlate the drop
+with `ai_usage_build_info` to tell a deployment apart from a change in
+behavior.
 
 #### Invariant: `token_type` classes are disjoint
 
@@ -180,8 +206,15 @@ Whether zeroes are materialized depends on whether the label set is closed:
 6. The shipped dashboards default `window` to `30d`: narrower nested windows
    empty first and must not be the initial analytical view.
 7. Missing data is not a consumption alert: availability or freshness alerts
-   must query `ai_usage_provider_available` and
-   `ai_usage_scan_timestamp_seconds`, not the presence of token series.
+   must query `ai_usage_provider_available`,
+   `ai_usage_provider_stale`, and `ai_usage_scan_timestamp_seconds`, not the
+   presence of token series.
+8. A zero-filled usage panel asserts "no measured consumption", which is not
+   the same fact as "we read the source and parsed nothing". Zero-fill stays
+   (rule 3), but such a panel must never be the only readable element in its
+   row: the health row carries `ai_usage_provider_stale` next to
+   `ai_usage_provider_available` so the two empties are distinguishable
+   on screen. See [ADR-010](adr/0010-provider-liveness-metric.md).
 
 ### `ai_usage_last_event_timestamp_seconds`
 
@@ -191,6 +224,13 @@ Whether zeroes are materialized depends on whether the label set is closed:
 - **Meaning:** timestamp of the newest event found in `tool`'s local history
   at scan time. It detects inactive tools or data sources that stopped
   receiving events.
+- **Absent**, never `0`, for a provider with no parsed events at all: a `0`
+  here would advertise 1970 and poison `time() - x` and any `min`/`max` over
+  it. Absence together with `ai_usage_provider_available=1` is exactly the
+  condition `ai_usage_provider_stale{reason="no_usage_events"}` reports, which
+  is the series freshness alerts must use — a panel computing
+  `time() - ai_usage_last_event_timestamp_seconds` renders the same "No data"
+  for a provider parsing nothing as for an unreachable exporter.
 
 ### `ai_usage_provider_available`
 
@@ -201,6 +241,50 @@ Whether zeroes are materialized depends on whether the label set is closed:
   during this scan; `0` if the source does not exist, is not readable, or
   parsing failed completely. It does not distinguish "never installed" from
   "failed to read" — that belongs in logs.
+- **This is a property of the read, not a liveness signal.** `1` says nothing
+  about whether the read produced any event: a provider whose source parses
+  cleanly and yields zero events reports `1`. Liveness is
+  `ai_usage_provider_stale`, and the two together form the provider's full
+  health state — see [ADR-010](adr/0010-provider-liveness-metric.md).
+
+### `ai_usage_provider_stale`
+
+- **Type:** gauge
+- **Labels:** `tool`, `reason`
+- **Unit:** boolean (`0` or `1`)
+- **Meaning:** `1` when `tool`'s source was read but its usage is not current,
+  for the given `reason`; `0` otherwise. The three reasons are mutually
+  exclusive, so at most one series per `tool` is `1` in a scan.
+- **`reason` values:**
+
+  | Value | Condition | What it means operationally |
+  |---|---|---|
+  | `no_usage_events` | source read, zero events parsed | We are reading and counting nothing. Act now: a parser or schema regression looks exactly like this. |
+  | `source_newer_than_last_event` | source changed >= 7 days after the newest parsed event | The source keeps growing while the parsed stream does not. |
+  | `last_event_too_old` | newest parsed event >= 21 days old | The tool is most likely just idle. |
+
+- All three series are materialized for every **available** provider, so all
+  three at `0` is a positive assertion of health. No series is emitted for an
+  unavailable provider, matching `ai_usage_sessions`.
+- Health state machine, read as a pair:
+
+  | `..._available` | `..._stale` | Meaning |
+  |---|---|---|
+  | `0` | absent | Source missing, unreadable, or every parse failed |
+  | `1` | all `0` | Source read, usage current |
+  | `1` | `no_usage_events=1` | Source read, nothing counted |
+  | `1` | `source_newer_than_last_event=1` | Source growing, parsed stream behind it |
+  | `1` | `last_event_too_old=1` | Source current, tool idle |
+
+- Fleet alert for the case that no other series can express, with no
+  dependence on series absence:
+
+  ```promql
+  max by (instance, tool) (ai_usage_provider_stale{reason="no_usage_events"}) == 1
+  ```
+
+- Adding or removing a `reason` value changes this contract: it requires
+  updating this document and ADR-010 in the same PR as the code change.
 
 ### `ai_usage_scan_timestamp_seconds`
 
