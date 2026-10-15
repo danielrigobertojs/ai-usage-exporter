@@ -142,6 +142,35 @@ INSERT INTO session_v3 (id, directory) VALUES ('ses_v3', '/home/user/projects/v3
 	return path
 }
 
+// buildPreMigrationFixture mirrors macmini's observed schema: the new table
+// shape exists but has never received a row, while the legacy message table
+// is still the actively written source of assistant usage.
+func buildPreMigrationFixture(t *testing.T) string {
+	t.Helper()
+	path, err := testdata.BuildBoth(t.TempDir(),
+		[]testdata.V2Session{{ID: "ses_current", Directory: "/home/user/projects/current"}},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("build current-shaped fixture: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open pre-migration fixture: %v", err)
+	}
+	defer db.Close()
+	const writtenAt = 1760547279000
+	if _, err := db.Exec(`
+INSERT INTO session (id, directory) VALUES ('ses_legacy', '/home/user/projects/legacy');
+INSERT INTO message (id, session_id, time_created, time_updated, data)
+VALUES ('legacy_live', 'ses_legacy', ?, ?, ?);`, writtenAt, writtenAt,
+		`{"role":"assistant","modelID":"legacy-live-model","time":{"created":1760547279000},"tokens":{"input":10,"output":5,"reasoning":1,"cache":{"read":20,"write":0}}}`,
+	); err != nil {
+		t.Fatalf("insert live legacy message: %v", err)
+	}
+	return path
+}
+
 func TestParseSchemaGenerations(t *testing.T) {
 	legacy := buildFixture(t)
 	v2 := buildV2Fixture(t, false)
@@ -204,6 +233,20 @@ func TestParseCurrentButIdleDoesNotReplayLegacy(t *testing.T) {
 	}
 	if events := parseAll(t, path); len(events) != 0 {
 		t.Fatalf("Parse emitted %d legacy events for an empty current generation", len(events))
+	}
+}
+
+// TestParsePreMigrationUsesRecentlyWrittenLegacyGeneration is the regression
+// case observed on macmini: session_message has the current shape but zero
+// rows, whereas message contains newer assistant usage. Before JCB-353 this
+// returned no events because the empty current-shaped table won by its name.
+func TestParsePreMigrationUsesRecentlyWrittenLegacyGeneration(t *testing.T) {
+	events := parseAll(t, buildPreMigrationFixture(t))
+	if len(events) != 1 {
+		t.Fatalf("Parse emitted %d events, want live legacy event", len(events))
+	}
+	if got := events[0]; got.Key.MessageID != "legacy_live" || got.Model != "legacy-live-model" {
+		t.Errorf("event = message %q, model %q; want legacy_live, legacy-live-model", got.Key.MessageID, got.Model)
 	}
 }
 

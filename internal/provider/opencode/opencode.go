@@ -37,6 +37,12 @@ import (
 
 const toolID = "opencode"
 
+type schemaCandidate struct {
+	name    string
+	rowID   int64
+	columns map[string]struct{}
+}
+
 // New returns the OpenCode provider.Provider.
 func New() provider.Provider {
 	return openCodeProvider{}
@@ -183,19 +189,24 @@ ORDER BY rowid DESC`)
 	}
 	defer tables.Close()
 
-	type candidate struct {
-		name  string
-		rowID int64
-	}
-	var sessions, messages []candidate
+	var sessions, messages []schemaCandidate
+	var legacyMessage schemaCandidate
+	var legacySession bool
 	for tables.Next() {
-		var table candidate
+		var table schemaCandidate
 		if err := tables.Scan(&table.name, &table.rowID); err != nil {
 			return "", err
 		}
 		columns, err := tableColumns(ctx, db, table.name)
 		if err != nil {
 			return "", err
+		}
+		table.columns = columns
+		if table.name == "message" && hasColumns(columns, "id", "session_id", "data") {
+			legacyMessage = table
+		}
+		if table.name == "session" && hasColumns(columns, "id", "directory") {
+			legacySession = true
 		}
 		if hasColumns(columns, "id", "directory") {
 			sessions = append(sessions, table)
@@ -223,10 +234,63 @@ ORDER BY rowid DESC`)
 		}
 	}
 	// Current-shaped tables exist but contain no joinable assistant row yet.
-	// This is normal directly after a migration; returning legacy here would
-	// replay historical usage as if it belonged to the new generation. The
-	// newest pair preserves the empty current snapshot until data arrives.
+	// This is normal directly after a migration, but not every database with
+	// both shapes has completed that migration: on a pre-migration database,
+	// the legacy message table remains the actively written one. Prefer it only
+	// when its physical write timestamp is newer than the empty current-shaped
+	// table. This preserves the empty current snapshot for an actual migration
+	// while keeping a still-active legacy database observable.
+	if legacySession && legacyMessage.name != "" {
+		newer, err := legacyIsNewer(ctx, db, messages[0], legacyMessage)
+		if err != nil {
+			return "", err
+		}
+		if newer {
+			return legacyQuery, nil
+		}
+	}
 	return fmt.Sprintf(currentQuery, quoteIdentifier(messages[0].name), quoteIdentifier(sessions[0].name)), nil
+}
+
+// legacyIsNewer reports whether the legacy message table was written after
+// the newest current-shaped message table. It is deliberately only used when
+// no current pair has an assistant row: once a current pair produces usage,
+// JCB-351 makes that generation authoritative. A zero timestamp is not newer
+// than an empty table, so old fixtures and completed migrations do not replay
+// legacy history.
+func legacyIsNewer(ctx context.Context, db *sql.DB, current, legacy schemaCandidate) (bool, error) {
+	legacyWrite, err := latestWrite(ctx, db, legacy)
+	if err != nil {
+		return false, err
+	}
+	currentWrite, err := latestWrite(ctx, db, current)
+	if err != nil {
+		return false, err
+	}
+	return legacyWrite > currentWrite, nil
+}
+
+// latestWrite returns the greatest creation or update timestamp in table.
+// OpenCode stores these as milliseconds since the Unix epoch. Tables without
+// either timestamp are treated as having no observed writes.
+func latestWrite(ctx context.Context, db *sql.DB, table schemaCandidate) (int64, error) {
+	var expression string
+	switch {
+	case hasColumns(table.columns, "time_created", "time_updated"):
+		expression = "CASE WHEN time_updated > time_created THEN time_updated ELSE time_created END"
+	case hasColumns(table.columns, "time_updated"):
+		expression = "time_updated"
+	case hasColumns(table.columns, "time_created"):
+		expression = "time_created"
+	default:
+		return 0, nil
+	}
+	query := fmt.Sprintf("SELECT COALESCE(MAX(%s), 0) FROM %s", expression, quoteIdentifier(table.name))
+	var latest int64
+	if err := db.QueryRowContext(ctx, query).Scan(&latest); err != nil {
+		return 0, err
+	}
+	return latest, nil
 }
 
 // schemaHasAssistantRows verifies a candidate table pair before it becomes
