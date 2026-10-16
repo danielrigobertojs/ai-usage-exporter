@@ -167,6 +167,11 @@ ai_usage_last_event_timestamp_seconds{tool="claude-code"} 1.767225600e+09
 # HELP ai_usage_provider_available 1 if tool's data source was found and read in this scan, 0 if it does not exist, is not readable, or parsing failed completely.
 # TYPE ai_usage_provider_available gauge
 ai_usage_provider_available{tool="claude-code"} 1
+# HELP ai_usage_provider_stale 1 if tool's source was read but its usage is not current, for the given reason; 0 otherwise. Emitted only for available providers.
+# TYPE ai_usage_provider_stale gauge
+ai_usage_provider_stale{reason="last_event_too_old",tool="claude-code"} 0
+ai_usage_provider_stale{reason="no_usage_events",tool="claude-code"} 0
+ai_usage_provider_stale{reason="source_newer_than_last_event",tool="claude-code"} 0
 # HELP ai_usage_scan_duration_seconds How long the startup scan of every provider took.
 # TYPE ai_usage_scan_duration_seconds gauge
 ai_usage_scan_duration_seconds 2.5
@@ -209,6 +214,7 @@ ai_usage_tool_calls{tool="claude-code",window="mtd"} 0
 		"ai_usage_tool_calls",
 		"ai_usage_last_event_timestamp_seconds",
 		"ai_usage_provider_available",
+		"ai_usage_provider_stale",
 		"ai_usage_scan_timestamp_seconds",
 		"ai_usage_scan_duration_seconds",
 		"ai_usage_scan_files",
@@ -219,6 +225,106 @@ ai_usage_tool_calls{tool="claude-code",window="mtd"} 0
 	if err := testutil.CollectAndCompare(c, strings.NewReader(expected), metricNames...); err != nil {
 		t.Fatalf("CollectAndCompare:\n%v", err)
 	}
+}
+
+func TestProviderStaleStateSet(t *testing.T) {
+	tests := []struct {
+		name       string
+		result     scan.Result
+		wantSeries int
+		wantStale  string
+		wantAvail  float64
+	}{
+		{
+			name:       "available provider affirms healthy reasons",
+			result:     fixedResult(),
+			wantSeries: 3,
+			wantAvail:  1,
+		},
+		{
+			name: "available provider sets exactly its stale reason",
+			result: scan.Result{PerTool: map[string]scan.ToolResult{
+				"opencode": {Available: true, StaleReason: "source_newer_than_last_event"},
+			}},
+			wantSeries: 3,
+			wantStale:  "source_newer_than_last_event",
+			wantAvail:  1,
+		},
+		{
+			name: "unavailable provider has no stale state set",
+			result: scan.Result{PerTool: map[string]scan.ToolResult{
+				"codex": {Available: false},
+			}},
+			wantSeries: 0,
+			wantAvail:  0,
+		},
+		{
+			name: "source read with zero events is visible",
+			result: scan.Result{PerTool: map[string]scan.ToolResult{
+				"opencode": {Available: true, StaleReason: "no_usage_events"},
+			}},
+			wantSeries: 3,
+			wantStale:  "no_usage_events",
+			wantAvail:  1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := New(fixedCatalog(), Options{})
+			c.Set(tt.result)
+			families := mustGather(t, c)
+			mf := findFamily(families, "ai_usage_provider_stale")
+			gotSeries := 0
+			if mf != nil {
+				gotSeries = len(mf.Metric)
+			}
+			if gotSeries != tt.wantSeries {
+				t.Fatalf("stale series = %d, want %d", gotSeries, tt.wantSeries)
+			}
+
+			for _, reason := range scan.StaleReasons() {
+				if tt.wantSeries == 0 {
+					continue
+				}
+				value := gaugeValue(families, "ai_usage_provider_stale", map[string]string{"tool": toolFromResult(tt.result), "reason": reason})
+				want := 0.0
+				if reason == tt.wantStale {
+					want = 1
+				}
+				if value != want {
+					t.Errorf("provider_stale{reason=%q} = %v, want %v", reason, value, want)
+				}
+			}
+			if got := gaugeValue(families, "ai_usage_provider_available", map[string]string{"tool": toolFromResult(tt.result)}); got != tt.wantAvail {
+				t.Errorf("provider_available = %v, want %v", got, tt.wantAvail)
+			}
+		})
+	}
+}
+
+func TestProviderStaleCardinalityIsFifteenForFiveAvailableTools(t *testing.T) {
+	perTool := make(map[string]scan.ToolResult, 5)
+	for _, tool := range []string{"alpha", "beta", "gamma", "delta", "epsilon"} {
+		perTool[tool] = scan.ToolResult{Available: true}
+	}
+	c := New(fixedCatalog(), Options{})
+	c.Set(scan.Result{PerTool: perTool})
+	mf := findFamily(mustGather(t, c), "ai_usage_provider_stale")
+	if mf == nil || len(mf.Metric) != 15 {
+		got := 0
+		if mf != nil {
+			got = len(mf.Metric)
+		}
+		t.Errorf("provider_stale series = %d, want 15", got)
+	}
+}
+
+func toolFromResult(result scan.Result) string {
+	for tool := range result.PerTool {
+		return tool
+	}
+	return ""
 }
 
 // TestCollectUnknownModelOmitsCostWithoutCountingAsScanError covers step 8:

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Daniel Rigoberto Jacobo Sandoval
 
-// Package collector turns a scan.Result into the eleven metrics
+// Package collector turns a scan.Result into the metrics
 // docs/metrics.md contracts: a prometheus.Collector that serves a single,
 // atomically-swappable snapshot rather than recomputing anything on scrape,
 // per ADR-001.
@@ -56,6 +56,7 @@ type Collector struct {
 	toolCalls          *prometheus.Desc
 	lastEventTimestamp *prometheus.Desc
 	providerAvailable  *prometheus.Desc
+	providerStale      *prometheus.Desc
 	scanTimestamp      *prometheus.Desc
 	scanDuration       *prometheus.Desc
 	scanFiles          *prometheus.Desc
@@ -104,6 +105,11 @@ func New(cat pricing.Catalog, opts Options) *Collector {
 			prometheus.BuildFQName(namespace, "", "provider_available"),
 			"1 if tool's data source was found and read in this scan, 0 if it does not exist, is not readable, or parsing failed completely.",
 			[]string{"tool"}, nil,
+		),
+		providerStale: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "", "provider_stale"),
+			"1 if tool's source was read but its usage is not current, for the given reason; 0 otherwise. Emitted only for available providers.",
+			[]string{"tool", "reason"}, nil,
 		),
 		scanTimestamp: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "", "scan_timestamp_seconds"),
@@ -199,6 +205,7 @@ func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.toolCalls
 	ch <- c.lastEventTimestamp
 	ch <- c.providerAvailable
+	ch <- c.providerStale
 	ch <- c.scanTimestamp
 	ch <- c.scanDuration
 	ch <- c.scanFiles
@@ -290,6 +297,15 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			available = 1.0
 		}
 		ch <- prometheus.MustNewConstMetric(c.providerAvailable, prometheus.GaugeValue, available, tool)
+		if tr.Available {
+			for _, reason := range scan.StaleReasons() {
+				stale := 0.0
+				if tr.StaleReason == reason {
+					stale = 1
+				}
+				ch <- prometheus.MustNewConstMetric(c.providerStale, prometheus.GaugeValue, stale, tool, reason)
+			}
+		}
 		ch <- prometheus.MustNewConstMetric(c.scanFiles, prometheus.GaugeValue, float64(tr.FilesScanned), tool)
 		ch <- prometheus.MustNewConstMetric(c.scanErrors, prometheus.GaugeValue, float64(tr.ParseErrors), tool)
 	}
