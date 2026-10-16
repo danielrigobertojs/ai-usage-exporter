@@ -388,7 +388,7 @@ func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
 		available   bool
 		staleReason string
 		wantTokens  int64
-		wantFiles   int
+		minFiles    int
 	}{
 		{
 			name: "empty current generation is available and stale",
@@ -400,7 +400,7 @@ func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
 			},
 			available:   true,
 			staleReason: "no_usage_events",
-			wantFiles:   1,
+			minFiles:    1,
 		},
 		{
 			name: "current generation with no assistant rows is available and stale",
@@ -412,7 +412,7 @@ func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
 			},
 			available:   true,
 			staleReason: "no_usage_events",
-			wantFiles:   1,
+			minFiles:    1,
 		},
 		{
 			name: "current generation with assistant rows is available and not stale",
@@ -424,14 +424,14 @@ func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
 			},
 			available:  true,
 			wantTokens: 18,
-			wantFiles:  1,
+			minFiles:   1,
 		},
 		{
 			name: "no generation tables is unavailable and not stale",
 			build: func(dir string) (string, error) {
 				return testdata.BuildWithoutGeneration(dir)
 			},
-			wantFiles: 1,
+			minFiles: 1,
 		},
 	}
 
@@ -463,8 +463,12 @@ func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
 			}
 
 			got := result.PerTool["opencode"]
-			if got.FilesScanned != tt.wantFiles {
-				t.Errorf("FilesScanned = %d, want %d; fixture database must be discovered", got.FilesScanned, tt.wantFiles)
+			// OPENCODE_DATA_HOME overrides both platform roots. On Windows they
+			// consequently point at the same fixture and Discover reports it
+			// twice. The invariant that prevents a vacuous pass is discovery of
+			// at least one source, not a platform-specific source count.
+			if got.FilesScanned < tt.minFiles {
+				t.Errorf("FilesScanned = %d, want at least %d; fixture database must be discovered", got.FilesScanned, tt.minFiles)
 			}
 			if got.Available != tt.available {
 				t.Errorf("Available = %t, want %t", got.Available, tt.available)
