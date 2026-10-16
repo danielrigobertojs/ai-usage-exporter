@@ -379,8 +379,13 @@ func TestRunLogsStaleProviderWithoutPaths(t *testing.T) {
 // generation is still a readable source: it must become no_usage_events, not
 // indistinguishable from a missing OpenCode installation.
 func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
-	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
-	assistantData := `{"time":{"created":1791804042674},"model":{"id":"fixture-model","providerID":"opencode"},"tokens":{"total":18,"input":10,"output":3,"reasoning":5,"cache":{"read":0,"write":0}}}`
+	// Discover reads the filesystem's clock while Run receives now explicitly.
+	// Capture one reference instant, then derive the event and fixture mtime
+	// from it, so this test cannot turn stale merely because calendar time
+	// passed after the fixture was authored.
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	eventAt := now.Add(-time.Hour)
+	assistantData := fmt.Sprintf(`{"time":{"created":%d},"model":{"id":"fixture-model","providerID":"opencode"},"tokens":{"input":10,"output":3,"reasoning":5,"cache":{"read":0,"write":0}}}`, eventAt.UnixMilli())
 
 	tests := []struct {
 		name        string
@@ -441,8 +446,12 @@ func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
 			if err := os.Mkdir(filepath.Join(dataHome, "opencode"), 0o755); err != nil {
 				t.Fatalf("create OpenCode data directory: %v", err)
 			}
-			if _, err := tt.build(filepath.Join(dataHome, "opencode")); err != nil {
+			dbPath, err := tt.build(filepath.Join(dataHome, "opencode"))
+			if err != nil {
 				t.Fatalf("build opencode fixture: %v", err)
+			}
+			if err := os.Chtimes(dbPath, now, now); err != nil {
+				t.Fatalf("set fixture modification time: %v", err)
 			}
 
 			reg := provider.NewRegistry()
@@ -457,7 +466,7 @@ func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
 					return ""
 				},
 				FS: osRootFS{goos: runtime.GOOS},
-			}, testBudget(), now, time.UTC)
+			}, provider.DefaultBudget(now), now, time.UTC)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
