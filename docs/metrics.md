@@ -212,9 +212,7 @@ Whether zeroes are materialized depends on whether the label set is closed:
 7. Missing data is not a consumption alert: availability or freshness alerts
    must query `ai_usage_provider_available`,
    `ai_usage_provider_stale`, and `ai_usage_scan_timestamp_seconds`, not the
-   presence of token series. `ai_usage_provider_stale` is not emitted until
-   JCB-358 ships it; until then an alert naming it returns no data, so pair it
-   with `ai_usage_provider_available` rather than relying on it alone.
+   presence of token series.
 8. A zero-filled usage panel asserts "no measured consumption", which is not
    the same fact as "we read the source and parsed nothing". Zero-fill stays
    (rule 3), but such a panel must never be the only readable element in its
@@ -255,12 +253,6 @@ Whether zeroes are materialized depends on whether the label set is closed:
   health state — see [ADR-010](adr/0010-provider-liveness-metric.md).
 
 ### `ai_usage_provider_stale`
-
-> **Status: specified, not yet emitted.** No code emits this metric yet; the
-> collector change is JCB-358. Until that lands the series does not exist at
-> `/metrics`, so an alert or panel written against it returns no data — which
-> is the silent failure this contract exists to close. Treat every rule below
-> that names it as taking effect with JCB-358, not with this document.
 
 - **Type:** gauge
 - **Labels:** `tool`, `reason`

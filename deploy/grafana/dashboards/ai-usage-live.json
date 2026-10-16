@@ -1108,7 +1108,7 @@
     {
       "type": "table",
       "title": "Salud por instancia y provider",
-      "description": "Diagnostico del propio exporter en cada maquina: ficheros descubiertos, errores de parseo, si el provider esta disponible, y cuanto hace del ultimo evento visto. Un provider available=0 con files=0 es 'esta herramienta no esta instalada aqui'; available=0 con files>0 es un fallo de lectura que hay que mirar.",
+      "description": "Diagnostico del propio exporter en cada maquina: ficheros descubiertos, errores de parseo, disponibilidad, estado stale y cuanto hace del ultimo evento visto. Un provider available=0 con files=0 es 'esta herramienta no esta instalada aqui'; available=0 con files>0 es un fallo de lectura. 'Ultimo evento (hace)' sin datos significa cero eventos parseados: revise Estado stale.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1213,7 +1213,8 @@
               "Value #A": "Ficheros",
               "Value #B": "Errores",
               "Value #C": "Disponible",
-              "Value #D": "Ultimo evento (hace)"
+              "Value #D": "Estado stale",
+              "Value #E": "Ultimo evento (hace)"
             },
             "indexByName": {}
           }
@@ -1263,6 +1264,18 @@
           },
           "editorMode": "code",
           "expr": "time() - ai_usage_last_event_timestamp_seconds{instance=~\"$instance\", tool=~\"$tool\"}",
+          "refId": "E",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "ai_usage_provider_stale{instance=~\"$instance\", tool=~\"$tool\"}",
           "refId": "D",
           "range": false,
           "instant": true,

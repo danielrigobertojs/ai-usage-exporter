@@ -510,6 +510,7 @@ func TestLiveHealthPanelExpressions(t *testing.T) {
 		"ai_usage_scan_errors{instance=~\"$instance\", tool=~\"$tool\"}",
 		"ai_usage_provider_available{instance=~\"$instance\", tool=~\"$tool\"}",
 		"time() - ai_usage_last_event_timestamp_seconds{instance=~\"$instance\", tool=~\"$tool\"}",
+		"ai_usage_provider_stale{instance=~\"$instance\", tool=~\"$tool\"}",
 	}
 	for _, p := range flattenPanels(d.Panels) {
 		if p.Title != "Salud por instancia y provider" {

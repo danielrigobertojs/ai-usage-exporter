@@ -337,9 +337,12 @@ func TestRunLogsStaleProviderWithoutPaths(t *testing.T) {
 	old := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(old) })
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	_, err := Run(WithID(context.Background(), "stale-test"), reg, fakeEnv("alpha"), testBudget(), time.Now(), time.UTC)
+	result, err := Run(WithID(context.Background(), "stale-test"), reg, fakeEnv("alpha"), testBudget(), time.Now(), time.UTC)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+	if tr := result.PerTool["alpha"]; !tr.Available || tr.StaleReason != staleReasonNoUsageEvents {
+		t.Errorf("source read with zero events = %+v, want Available=true and StaleReason=%q", tr, staleReasonNoUsageEvents)
 	}
 	got := logs.String()
 	if !strings.Contains(got, "provider usage appears stale") || !strings.Contains(got, "reason=no_usage_events") {

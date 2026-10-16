@@ -141,6 +141,10 @@ func Run(ctx context.Context, reg *provider.Registry, env provider.Env, b provid
 }
 
 const (
+	staleReasonNoUsageEvents            = "no_usage_events"
+	staleReasonSourceNewerThanLastEvent = "source_newer_than_last_event"
+	staleReasonLastEventTooOld          = "last_event_too_old"
+
 	// staleEventAge is deliberately measured in weeks: a provider can be idle
 	// for a few days, but three weeks without an event deserves an operator
 	// warning even when its source itself has not changed.
@@ -150,6 +154,17 @@ const (
 	sourceEventLag = 7 * 24 * time.Hour
 )
 
+// StaleReasons returns the complete, closed set of reasons a ToolResult can
+// report as stale. Callers receive their own slice so they cannot alter the
+// collector's metric-label contract.
+func StaleReasons() []string {
+	return []string{
+		staleReasonNoUsageEvents,
+		staleReasonSourceNewerThanLastEvent,
+		staleReasonLastEventTooOld,
+	}
+}
+
 // staleReason describes a non-fatal sign that a provider is no longer
 // yielding current usage. It intentionally uses timestamps only; no source
 // path or log content can escape through diagnostics.
@@ -158,13 +173,13 @@ func staleReason(now, lastEvent, latestSource time.Time) string {
 		return ""
 	}
 	if lastEvent.IsZero() {
-		return "no_usage_events"
+		return staleReasonNoUsageEvents
 	}
 	if latestSource.Sub(lastEvent) >= sourceEventLag {
-		return "source_newer_than_last_event"
+		return staleReasonSourceNewerThanLastEvent
 	}
 	if now.Sub(lastEvent) >= staleEventAge {
-		return "last_event_too_old"
+		return staleReasonLastEventTooOld
 	}
 	return ""
 }
