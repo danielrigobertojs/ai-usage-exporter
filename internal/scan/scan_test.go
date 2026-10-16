@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -17,6 +19,8 @@ import (
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/aggregate"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/model"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider"
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider/opencode"
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider/opencode/testdata"
 )
 
 // namedFake behaves like internal/provider/fake, but with an ID this test
@@ -347,6 +351,103 @@ func TestRunLogsStaleProviderWithoutPaths(t *testing.T) {
 	}
 	if strings.Contains(got, "/home/user") {
 		t.Errorf("stale warning leaked source path: %s", got)
+	}
+}
+
+// TestRunOpenCodeCurrentGenerationAvailability exercises the real OpenCode
+// provider through discovery and scan state. In particular, an empty current
+// generation is still a readable source: it must become no_usage_events, not
+// indistinguishable from a missing OpenCode installation.
+func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	assistantData := `{"time":{"created":1791804042674},"model":{"id":"fixture-model","providerID":"opencode"},"tokens":{"total":18,"input":10,"output":3,"reasoning":5,"cache":{"read":0,"write":0}}}`
+
+	tests := []struct {
+		name        string
+		build       func(string) (string, error)
+		available   bool
+		staleReason string
+		wantTokens  int64
+	}{
+		{
+			name: "empty current generation is available and stale",
+			build: func(dir string) (string, error) {
+				return testdata.BuildV2(dir,
+					[]testdata.V2Session{{ID: "ses_empty", ProjectID: "prj_empty", Slug: "empty", Directory: "/redacted/empty", Version: "1"}},
+					nil,
+				)
+			},
+			available:   true,
+			staleReason: "no_usage_events",
+		},
+		{
+			name: "current generation with no assistant rows is available and stale",
+			build: func(dir string) (string, error) {
+				return testdata.BuildV2(dir,
+					[]testdata.V2Session{{ID: "ses_idle", ProjectID: "prj_idle", Slug: "idle", Directory: "/redacted/idle", Version: "1"}},
+					[]testdata.V2Message{{ID: "msg_user", SessionID: "ses_idle", Type: "user", Data: `{"time":{"created":1791804042674}}`}},
+				)
+			},
+			available:   true,
+			staleReason: "no_usage_events",
+		},
+		{
+			name: "current generation with assistant rows is available and not stale",
+			build: func(dir string) (string, error) {
+				return testdata.BuildV2(dir,
+					[]testdata.V2Session{{ID: "ses_live", ProjectID: "prj_live", Slug: "live", Directory: "/redacted/live", Version: "1"}},
+					[]testdata.V2Message{{ID: "msg_assistant", SessionID: "ses_live", Type: "assistant", Data: assistantData}},
+				)
+			},
+			available:  true,
+			wantTokens: 18,
+		},
+		{
+			name: "no generation tables is unavailable and not stale",
+			build: func(dir string) (string, error) {
+				return testdata.BuildWithoutGeneration(dir)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dataHome := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dataHome, "opencode"), 0o755); err != nil {
+				t.Fatalf("create OpenCode data directory: %v", err)
+			}
+			if _, err := tt.build(filepath.Join(dataHome, "opencode")); err != nil {
+				t.Fatalf("build opencode fixture: %v", err)
+			}
+
+			reg := provider.NewRegistry()
+			mustRegister(t, reg, opencode.New())
+			result, err := Run(context.Background(), reg, provider.Env{
+				GOOS: "linux",
+				Home: "/unused",
+				Getenv: func(name string) string {
+					if name == "OPENCODE_DATA_HOME" {
+						return dataHome
+					}
+					return ""
+				},
+				FS: os.DirFS("/"),
+			}, testBudget(), now, time.UTC)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			got := result.PerTool["opencode"]
+			if got.Available != tt.available {
+				t.Errorf("Available = %t, want %t", got.Available, tt.available)
+			}
+			if got.StaleReason != tt.staleReason {
+				t.Errorf("StaleReason = %q, want %q", got.StaleReason, tt.staleReason)
+			}
+			if tokens := sumTokens(result.Snapshot, "opencode", model.TokenInput) + sumTokens(result.Snapshot, "opencode", model.TokenOutput) + sumTokens(result.Snapshot, "opencode", model.TokenReasoning) + sumTokens(result.Snapshot, "opencode", model.TokenCacheRead) + sumTokens(result.Snapshot, "opencode", model.TokenCacheWrite); tokens != tt.wantTokens {
+				t.Errorf("OpenCode tokens = %d, want %d", tokens, tt.wantTokens)
+			}
+		})
 	}
 }
 
