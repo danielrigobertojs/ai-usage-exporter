@@ -188,6 +188,8 @@ ORDER BY rowid DESC`)
 		rowID int64
 	}
 	var sessions, messages []candidate
+	var legacyMessage bool
+	var legacySession bool
 	for tables.Next() {
 		var table candidate
 		if err := tables.Scan(&table.name, &table.rowID); err != nil {
@@ -196,6 +198,12 @@ ORDER BY rowid DESC`)
 		columns, err := tableColumns(ctx, db, table.name)
 		if err != nil {
 			return "", err
+		}
+		if table.name == "message" && hasColumns(columns, "id", "session_id", "data") {
+			legacyMessage = true
+		}
+		if table.name == "session" && hasColumns(columns, "id", "directory") {
+			legacySession = true
 		}
 		if hasColumns(columns, "id", "directory") {
 			sessions = append(sessions, table)
@@ -222,11 +230,39 @@ ORDER BY rowid DESC`)
 			}
 		}
 	}
-	// Current-shaped tables exist but contain no joinable assistant row yet.
-	// This is normal directly after a migration; returning legacy here would
-	// replay historical usage as if it belonged to the new generation. The
-	// newest pair preserves the empty current snapshot until data arrives.
+	// A current-shaped generation does not become authoritative until it holds
+	// an assistant message. A partially-created migration can contain newer
+	// user rows while its legacy tables are still the only source of usage.
+	// Select legacy only when it has an assistant row too: if neither family
+	// does, preserve the empty current snapshot.
+	if legacySession && legacyMessage {
+		hasAssistant, err := legacyHasAssistantRows(ctx, db)
+		if err != nil {
+			return "", err
+		}
+		if hasAssistant {
+			return legacyQuery, nil
+		}
+	}
 	return fmt.Sprintf(currentQuery, quoteIdentifier(messages[0].name), quoteIdentifier(sessions[0].name)), nil
+}
+
+// legacyHasAssistantRows verifies that the legacy pair, rather than merely
+// its table shape, contains usage. This deliberately projects no data blob.
+func legacyHasAssistantRows(ctx context.Context, db *sql.DB) (bool, error) {
+	var one int
+	err := db.QueryRowContext(ctx, `
+SELECT 1
+FROM message m JOIN session s ON s.id = m.session_id
+WHERE json_valid(m.data) AND json_extract(m.data, '$.role') = 'assistant'
+LIMIT 1`).Scan(&one)
+	if err == nil {
+		return true, nil
+	}
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return false, err
 }
 
 // schemaHasAssistantRows verifies a candidate table pair before it becomes
