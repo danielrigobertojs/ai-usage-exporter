@@ -72,6 +72,79 @@ that joins or accumulates both table families fails this test.
   bounded. A zero-assistant current table is an incomplete migration, not that
   omission, and is handled by the empty-current exception without a union.
 
+## Amendment 2026-10-15 — the legacy generation is identified by name *and* shape
+
+JCB-354 was asked whether JCB-345's criterion — detect a generation by
+structure, never by a versioned table name — reopens for the legacy pair, since
+JCB-353's fix matches it as `table.name == "message" && hasColumns(columns,
+"id", "session_id", "data")`.
+
+**It does not reopen. Legacy keeps its literal names, and the name must always
+be conjoined with a column check. Current generations stay structural.**
+
+The two criteria guard opposite risks, which is why they are allowed to differ:
+
+- JCB-345 guards an **open** set. A future generation can arrive under a name
+  nobody enumerated (`session_v3`, `session_message_v3`), and selecting by name
+  would silently fall back to older tables. Only structure is knowable in
+  advance there.
+- Legacy is a **closed** historical fact. `session`/`message` already exist on
+  disk in shipped databases, and no new legacy generation can appear: legacy is
+  by definition the family that predates the current one.
+
+The decisive reason is that at the legacy shape, structure does not
+discriminate. The legacy signature `(id, session_id, data)` is a strict subset
+of OpenCode's delivery queues: `session_inbox` is
+`(id, session_id, type, data, delivery, enqueued_seq, time_created)` and
+`session_pending` is the same shape with `admitted_seq`. Structure-only legacy
+selection would therefore accept a queue as the legacy message table. This is
+the same residual risk `schemaQuery` already documents for the current shape,
+where `seq` is what separates a message table from a queue; legacy has no
+`seq`, so it has no structural separator at all.
+
+What makes the name load-bearing rather than merely convenient is that the two
+functions which actually read legacy both hardcode the names: `legacyQuery`
+reads `FROM message m JOIN session s` plus `FROM part p`, and
+`legacyHasAssistantRows` — the check that decides the empty-current exception
+above — reads `FROM message m JOIN session s` as well. The structural match is
+only a precondition gate in front of those queries. A structural gate would
+therefore be able to pass on `session_inbox` while the query that follows reads
+`message`, or pass on a database with no table named `message` at all, where
+the query then fails. Pinning the gate to the same literal names the queries
+use is what keeps the precondition and the query talking about the same two
+tables.
+
+Name-based legacy identity also predates JCB-345 and was not changed by it:
+`legacyQuery` is a constant that reads `FROM message m JOIN session s` and
+`FROM part p` directly. JCB-353 makes an assumption explicit that was already
+compiled into the SQL; making it structural would mean parameterizing that
+query's table names, which buys nothing against a closed set and costs the only
+discriminator that works.
+
+Rules this fixes for future changes:
+
+1. A legacy name check never stands alone. `message` requires
+   `(id, session_id, data)` and `session` requires `(id, directory)`; a
+   database that reuses either name for a different shape is rejected, not
+   misread.
+2. The current family is never selected by name. Adding a literal
+   `session_message_v4` to `schemaQuery` is a violation of JCB-345 regardless
+   of this amendment.
+3. Reopen structural detection for legacy if OpenCode ships a *new* table
+   literally named `message` with a different shape, or if the legacy family
+   acquires more than one on-disk name. At that point the discriminator must be
+   a column set that no queue table satisfies — not the legacy signature above.
+
+This amendment describes the selector as of JCB-353: `legacyHasAssistantRows`
+and the empty-current exception are introduced there, so it is written to land
+with or after that change, never before it.
+
+Noted, not decided here: `legacyQuery` also reads `part`, which the legacy
+predicate does not verify. A legacy pair without `part` makes the query fail
+per source, which surfaces as `ai_usage_scan_errors > 0` rather than as silent
+emptiness, so it is loud under the ADR-010 signals and is at most optional
+hardening.
+
 ## Privacy invariant
 
 OpenCode's current `session_message.data.content` can contain prompts,

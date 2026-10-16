@@ -26,3 +26,14 @@ materialize up to `6 × |tuples in window="all"|` series: about 690 instead of
 Reconsider closing the `window` axis if these gauges must feed `rate()` or
 `increase()`, because gaps would then affect the calculation. Until then they
 remain gauges re-derived from history under ADR-001.
+
+## Amendment 2026-10-15 — a zero-filled panel is never read alone
+
+JCB-354 found the limit of the rule above: zero-fill over
+`ai_usage_provider_available` asserts "no measured consumption", and for a
+provider that read its source and parsed nothing it asserts that wrongly, with
+a confident `0` line. The rule stands — the fix is not query-side — but a
+zero-filled panel must not be the only readable element in its row. The health
+row carries `ai_usage_provider_stale` beside `ai_usage_provider_available` so
+that "no consumption" and "nothing parsed" are distinguishable on screen. See
+[ADR-010](0010-provider-liveness-metric.md).
