@@ -177,8 +177,9 @@ be able to render both, plus health. Consequences for the shipped dashboards:
 
 ## Implementation contract
 
-For the follow-up implementation ticket; the architecture decision is this
-document.
+For the follow-up implementation ticket, JCB-358; the architecture decision is
+this document. Until JCB-358 ships, `ai_usage_provider_stale` is specified and
+not emitted, and `docs/metrics.md` says so in the metric's own section.
 
 - `internal/collector/collector.go`: one `prometheus.NewDesc` named
   `provider_stale` with labels `{"tool", "reason"}`; help text: `1 if tool's

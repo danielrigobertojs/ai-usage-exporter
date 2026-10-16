@@ -59,10 +59,14 @@ because it enables monitoring of recent usage without introducing labels or
 persistent state.
 
 Diagnostic series are counted against the same bound. `ai_usage_provider_stale`
-materializes its closed `reason` axis for every available provider:
+materializes its closed `reason` axis for every available provider. Note that
+the `5 tools` above is declared headroom, not a count: three providers are
+registered today (`claude-code`, `codex`, `opencode`, pinned by
+`TestRegistry`), so both numbers are stated on their own basis:
 
 ```
-5 tools x 3 reasons = 15 series   (+0.33% of the 4,500 bound)
+measured today:     3 tools x 3 reasons =  9 series   (+0.20% of the 4,500 bound)
+declared worst case: 5 tools x 3 reasons = 15 series   (+0.33%)
 ```
 
 It is accepted because the reason set is closed in our own source, it is the
@@ -208,13 +212,16 @@ Whether zeroes are materialized depends on whether the label set is closed:
 7. Missing data is not a consumption alert: availability or freshness alerts
    must query `ai_usage_provider_available`,
    `ai_usage_provider_stale`, and `ai_usage_scan_timestamp_seconds`, not the
-   presence of token series.
+   presence of token series. `ai_usage_provider_stale` is not emitted until
+   JCB-358 ships it; until then an alert naming it returns no data, so pair it
+   with `ai_usage_provider_available` rather than relying on it alone.
 8. A zero-filled usage panel asserts "no measured consumption", which is not
    the same fact as "we read the source and parsed nothing". Zero-fill stays
    (rule 3), but such a panel must never be the only readable element in its
    row: the health row carries `ai_usage_provider_stale` next to
    `ai_usage_provider_available` so the two empties are distinguishable
-   on screen. See [ADR-010](adr/0010-provider-liveness-metric.md).
+   on screen. The shipped dashboards gain that element with JCB-358, together
+   with the metric. See [ADR-010](adr/0010-provider-liveness-metric.md).
 
 ### `ai_usage_last_event_timestamp_seconds`
 
@@ -248,6 +255,12 @@ Whether zeroes are materialized depends on whether the label set is closed:
   health state — see [ADR-010](adr/0010-provider-liveness-metric.md).
 
 ### `ai_usage_provider_stale`
+
+> **Status: specified, not yet emitted.** No code emits this metric yet; the
+> collector change is JCB-358. Until that lands the series does not exist at
+> `/metrics`, so an alert or panel written against it returns no data — which
+> is the silent failure this contract exists to close. Treat every rule below
+> that names it as taking effect with JCB-358, not with this document.
 
 - **Type:** gauge
 - **Labels:** `tool`, `reason`

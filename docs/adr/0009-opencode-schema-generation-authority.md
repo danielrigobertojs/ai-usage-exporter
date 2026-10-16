@@ -81,14 +81,22 @@ discriminate. The legacy signature `(id, session_id, data)` is a strict subset
 of OpenCode's delivery queues: `session_inbox` is
 `(id, session_id, type, data, delivery, enqueued_seq, time_created)` and
 `session_pending` is the same shape with `admitted_seq`. Structure-only legacy
-selection would therefore accept a queue as the legacy message table — and
-because `session_inbox` carries `time_created`, JCB-353's recency comparison
-would then be able to rank a delivery queue as the "live legacy generation".
-That is a worse failure than the one JCB-345 prevented, and the literal name is
-the only thing that rules it out. This is the same residual risk `schemaQuery`
-already documents for the current shape, where `seq` is what separates a
-message table from a queue; legacy has no `seq`, so it has no structural
-separator at all.
+selection would therefore accept a queue as the legacy message table. This is
+the same residual risk `schemaQuery` already documents for the current shape,
+where `seq` is what separates a message table from a queue; legacy has no
+`seq`, so it has no structural separator at all.
+
+What makes the name load-bearing rather than merely convenient is that the two
+functions which actually read legacy both hardcode the names: `legacyQuery`
+reads `FROM message m JOIN session s` plus `FROM part p`, and
+`legacyHasAssistantRows` — the check that decides the empty-current exception
+above — reads `FROM message m JOIN session s` as well. The structural match is
+only a precondition gate in front of those queries. A structural gate would
+therefore be able to pass on `session_inbox` while the query that follows reads
+`message`, or pass on a database with no table named `message` at all, where
+the query then fails. Pinning the gate to the same literal names the queries
+use is what keeps the precondition and the query talking about the same two
+tables.
 
 Name-based legacy identity also predates JCB-345 and was not changed by it:
 `legacyQuery` is a constant that reads `FROM message m JOIN session s` and
@@ -110,6 +118,10 @@ Rules this fixes for future changes:
    literally named `message` with a different shape, or if the legacy family
    acquires more than one on-disk name. At that point the discriminator must be
    a column set that no queue table satisfies — not the legacy signature above.
+
+This amendment describes the selector as of JCB-353: `legacyHasAssistantRows`
+and the empty-current exception are introduced there, so it is written to land
+with or after that change, never before it.
 
 Noted, not decided here: `legacyQuery` also reads `part`, which the legacy
 predicate does not verify. A legacy pair without `part` makes the query fail
