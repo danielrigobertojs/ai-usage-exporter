@@ -40,7 +40,10 @@ type Message struct {
 // session_message tables. Data remains an opaque, redacted JSON fixture.
 type V2Session struct {
 	ID        string
+	ProjectID string
+	Slug      string
 	Directory string
+	Version   string
 }
 
 type V2Message struct {
@@ -274,6 +277,82 @@ func BuildV3WithSchemaDecoys(dir string, sessions []V2Session, messages []V2Mess
 	return path, nil
 }
 
+// BuildWithoutGeneration creates a real-shaped OpenCode database whose
+// project catalogue exists but which has neither a legacy nor a current
+// session/message generation. It models an initialized data directory before
+// OpenCode has created any session tables.
+func BuildWithoutGeneration(dir string) (string, error) {
+	path := filepath.Join(dir, "opencode.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		return "", fmt.Errorf("testdata: open %s: %w", path, err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(projectSchema); err != nil {
+		return "", fmt.Errorf("testdata: create project-only schema: %w", err)
+	}
+	return path, nil
+}
+
+// projectSchema and currentSessionSchema are copied from a contemporary
+// opencode.db. Keep the session shape complete: generation-selection bugs
+// have previously slipped through fixtures that reduced it to id/directory.
+const projectSchema = `CREATE TABLE project (
+        id text PRIMARY KEY,
+        worktree text NOT NULL,
+        vcs text,
+        name text,
+        icon_url text,
+        icon_color text,
+        time_created integer NOT NULL,
+        time_updated integer NOT NULL,
+        time_initialized integer,
+        sandboxes text NOT NULL,
+        commands text,
+        icon_url_override text,
+        time_active integer DEFAULT 0 NOT NULL
+);`
+
+const currentSessionSchema = `(
+        id text PRIMARY KEY,
+        project_id text NOT NULL,
+        workspace_id text,
+        parent_id text,
+        fork_session_id text,
+        fork_boundary text,
+        slug text NOT NULL,
+        directory text NOT NULL,
+        path text,
+        title text,
+        version text NOT NULL,
+        share_url text,
+        summary_additions integer,
+        summary_deletions integer,
+        summary_files integer,
+        summary_diffs text,
+        metadata text,
+        cost real DEFAULT 0 NOT NULL,
+        tokens_input integer DEFAULT 0 NOT NULL,
+        tokens_output integer DEFAULT 0 NOT NULL,
+        tokens_reasoning integer DEFAULT 0 NOT NULL,
+        tokens_cache_read integer DEFAULT 0 NOT NULL,
+        tokens_cache_write integer DEFAULT 0 NOT NULL,
+        revert text,
+        permission text,
+        agent text,
+        model text,
+        time_created integer NOT NULL,
+        time_updated integer NOT NULL,
+        time_compacting integer,
+        time_archived integer,
+        time_suspended integer,
+        resume_attempts integer DEFAULT 0 NOT NULL,
+        time_idle integer,
+        time_viewed integer,
+        idle_outcome text,
+        CONSTRAINT fk_session_project_id_project_id_fk FOREIGN KEY (project_id) REFERENCES project(id) ON DELETE CASCADE
+)`
+
 func buildCurrent(dir string, sessions []V2Session, messages []V2Message, withLegacy bool, sessionTable, messageTable string) (string, error) {
 	path := filepath.Join(dir, "opencode.db")
 	db, err := sql.Open("sqlite", "file:"+path)
@@ -286,13 +365,37 @@ func buildCurrent(dir string, sessions []V2Session, messages []V2Message, withLe
 			return "", fmt.Errorf("testdata: create legacy schema: %w", err)
 		}
 	}
-	schema := "CREATE TABLE " + quoteIdentifier(sessionTable) + " (id TEXT PRIMARY KEY, directory TEXT NOT NULL);" +
-		"CREATE TABLE " + quoteIdentifier(messageTable) + " (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);"
+	schema := projectSchema +
+		"CREATE TABLE " + quoteIdentifier(sessionTable) + " " + currentSessionSchema + ";" +
+		"CREATE INDEX " + quoteIdentifier(sessionTable+"_project_idx") + " ON " + quoteIdentifier(sessionTable) + " (project_id);" +
+		"CREATE INDEX " + quoteIdentifier(sessionTable+"_workspace_idx") + " ON " + quoteIdentifier(sessionTable) + " (workspace_id);" +
+		"CREATE INDEX " + quoteIdentifier(sessionTable+"_parent_idx") + " ON " + quoteIdentifier(sessionTable) + " (parent_id);" +
+		"CREATE INDEX " + quoteIdentifier(sessionTable+"_time_suspended_idx") + " ON " + quoteIdentifier(sessionTable) + " (time_suspended) WHERE time_suspended IS NOT NULL;" +
+		"CREATE TABLE " + quoteIdentifier(messageTable) + " (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL, CONSTRAINT fk_session_message_session_id_session_v2_id_fk FOREIGN KEY (session_id) REFERENCES " + quoteIdentifier(sessionTable) + "(id) ON DELETE CASCADE);" +
+		"CREATE UNIQUE INDEX " + quoteIdentifier(messageTable+"_session_seq_idx") + " ON " + quoteIdentifier(messageTable) + " (session_id, seq);" +
+		"CREATE INDEX " + quoteIdentifier(messageTable+"_session_type_seq_idx") + " ON " + quoteIdentifier(messageTable) + " (session_id, type, seq);" +
+		"CREATE INDEX " + quoteIdentifier(messageTable+"_session_time_created_id_idx") + " ON " + quoteIdentifier(messageTable) + " (session_id, time_created, id);" +
+		"CREATE INDEX " + quoteIdentifier(messageTable+"_time_created_idx") + " ON " + quoteIdentifier(messageTable) + " (time_created);"
 	if _, err := db.Exec(schema); err != nil {
 		return "", fmt.Errorf("testdata: create v2 schema: %w", err)
 	}
 	for _, s := range sessions {
-		if _, err := db.Exec("INSERT INTO "+quoteIdentifier(sessionTable)+" (id, directory) VALUES (?, ?)", s.ID, s.Directory); err != nil {
+		projectID := s.ProjectID
+		if projectID == "" {
+			projectID = "prj_" + s.ID
+		}
+		slug := s.Slug
+		if slug == "" {
+			slug = s.ID
+		}
+		version := s.Version
+		if version == "" {
+			version = "1"
+		}
+		if _, err := db.Exec(`INSERT INTO project (id, worktree, time_created, time_updated, sandboxes) VALUES (?, ?, 0, 0, '[]')`, projectID, s.Directory); err != nil {
+			return "", fmt.Errorf("testdata: insert v2 project %s: %w", projectID, err)
+		}
+		if _, err := db.Exec("INSERT INTO "+quoteIdentifier(sessionTable)+" (id, project_id, slug, directory, version, time_created, time_updated) VALUES (?, ?, ?, ?, ?, 0, 0)", s.ID, projectID, slug, s.Directory, version); err != nil {
 			return "", fmt.Errorf("testdata: insert v2 session %s: %w", s.ID, err)
 		}
 	}

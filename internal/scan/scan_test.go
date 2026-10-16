@@ -8,7 +8,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -17,6 +21,8 @@ import (
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/aggregate"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/model"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider"
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider/opencode"
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/provider/opencode/testdata"
 )
 
 // namedFake behaves like internal/provider/fake, but with an ID this test
@@ -98,6 +104,24 @@ func multiEnv(ids ...string) provider.Env {
 
 func testBudget() provider.Budget {
 	return provider.DefaultBudget(time.Now())
+}
+
+// osRootFS mirrors provider.realFS for a test that needs a real SQLite file.
+// Env.FS receives virtual slash-separated paths without a leading slash; on
+// Windows those paths retain the drive letter and cannot be opened through
+// os.DirFS("/").
+type osRootFS struct {
+	goos string
+}
+
+func (r osRootFS) Open(name string) (fs.File, error) {
+	if !fs.ValidPath(name) {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+	}
+	if r.goos == "windows" {
+		return os.Open(strings.ReplaceAll(name, "/", `\`))
+	}
+	return os.Open("/" + name)
 }
 
 // TestRunSumsAcrossProvidersAndFillsPerTool covers step 3: two providers'
@@ -347,6 +371,124 @@ func TestRunLogsStaleProviderWithoutPaths(t *testing.T) {
 	}
 	if strings.Contains(got, "/home/user") {
 		t.Errorf("stale warning leaked source path: %s", got)
+	}
+}
+
+// TestRunOpenCodeCurrentGenerationAvailability exercises the real OpenCode
+// provider through discovery and scan state. In particular, an empty current
+// generation is still a readable source: it must become no_usage_events, not
+// indistinguishable from a missing OpenCode installation.
+func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
+	// Discover reads the filesystem's clock while Run receives now explicitly.
+	// Capture one reference instant, then derive the event and fixture mtime
+	// from it, so this test cannot turn stale merely because calendar time
+	// passed after the fixture was authored.
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	eventAt := now.Add(-time.Hour)
+	assistantData := fmt.Sprintf(`{"time":{"created":%d},"model":{"id":"fixture-model","providerID":"opencode"},"tokens":{"input":10,"output":3,"reasoning":5,"cache":{"read":0,"write":0}}}`, eventAt.UnixMilli())
+
+	tests := []struct {
+		name        string
+		build       func(string) (string, error)
+		available   bool
+		staleReason string
+		wantTokens  int64
+		minFiles    int
+	}{
+		{
+			name: "empty current generation is available and stale",
+			build: func(dir string) (string, error) {
+				return testdata.BuildV2(dir,
+					[]testdata.V2Session{{ID: "ses_empty", ProjectID: "prj_empty", Slug: "empty", Directory: "/redacted/empty", Version: "1"}},
+					nil,
+				)
+			},
+			available:   true,
+			staleReason: "no_usage_events",
+			minFiles:    1,
+		},
+		{
+			name: "current generation with no assistant rows is available and stale",
+			build: func(dir string) (string, error) {
+				return testdata.BuildV2(dir,
+					[]testdata.V2Session{{ID: "ses_idle", ProjectID: "prj_idle", Slug: "idle", Directory: "/redacted/idle", Version: "1"}},
+					[]testdata.V2Message{{ID: "msg_user", SessionID: "ses_idle", Type: "user", Data: `{"time":{"created":1791804042674}}`}},
+				)
+			},
+			available:   true,
+			staleReason: "no_usage_events",
+			minFiles:    1,
+		},
+		{
+			name: "current generation with assistant rows is available and not stale",
+			build: func(dir string) (string, error) {
+				return testdata.BuildV2(dir,
+					[]testdata.V2Session{{ID: "ses_live", ProjectID: "prj_live", Slug: "live", Directory: "/redacted/live", Version: "1"}},
+					[]testdata.V2Message{{ID: "msg_assistant", SessionID: "ses_live", Type: "assistant", Data: assistantData}},
+				)
+			},
+			available:  true,
+			wantTokens: 18,
+			minFiles:   1,
+		},
+		{
+			name: "no generation tables is unavailable and not stale",
+			build: func(dir string) (string, error) {
+				return testdata.BuildWithoutGeneration(dir)
+			},
+			minFiles: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dataHome := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dataHome, "opencode"), 0o755); err != nil {
+				t.Fatalf("create OpenCode data directory: %v", err)
+			}
+			dbPath, err := tt.build(filepath.Join(dataHome, "opencode"))
+			if err != nil {
+				t.Fatalf("build opencode fixture: %v", err)
+			}
+			if err := os.Chtimes(dbPath, now, now); err != nil {
+				t.Fatalf("set fixture modification time: %v", err)
+			}
+
+			reg := provider.NewRegistry()
+			mustRegister(t, reg, opencode.New())
+			result, err := Run(context.Background(), reg, provider.Env{
+				GOOS: runtime.GOOS,
+				Home: "/unused",
+				Getenv: func(name string) string {
+					if name == "OPENCODE_DATA_HOME" {
+						return dataHome
+					}
+					return ""
+				},
+				FS: osRootFS{goos: runtime.GOOS},
+			}, provider.DefaultBudget(now), now, time.UTC)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			got := result.PerTool["opencode"]
+			// OPENCODE_DATA_HOME overrides both platform roots. On Windows they
+			// consequently point at the same fixture and Discover reports it
+			// twice. The invariant that prevents a vacuous pass is discovery of
+			// at least one source, not a platform-specific source count.
+			if got.FilesScanned < tt.minFiles {
+				t.Errorf("FilesScanned = %d, want at least %d; fixture database must be discovered", got.FilesScanned, tt.minFiles)
+			}
+			if got.Available != tt.available {
+				t.Errorf("Available = %t, want %t", got.Available, tt.available)
+			}
+			if got.StaleReason != tt.staleReason {
+				t.Errorf("StaleReason = %q, want %q", got.StaleReason, tt.staleReason)
+			}
+			if tokens := sumTokens(result.Snapshot, "opencode", model.TokenInput) + sumTokens(result.Snapshot, "opencode", model.TokenOutput) + sumTokens(result.Snapshot, "opencode", model.TokenReasoning) + sumTokens(result.Snapshot, "opencode", model.TokenCacheRead) + sumTokens(result.Snapshot, "opencode", model.TokenCacheWrite); tokens != tt.wantTokens {
+				t.Errorf("OpenCode tokens = %d, want %d", tokens, tt.wantTokens)
+			}
+		})
 	}
 }
 
