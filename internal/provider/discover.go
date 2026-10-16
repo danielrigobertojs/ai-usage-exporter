@@ -75,6 +75,7 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 
 	var stats Stats
 	resolvedRoots := make(map[string]struct{})
+	candidatePaths := make(map[string]struct{})
 	var candidates []Source
 
 	for _, spec := range d.Roots {
@@ -122,8 +123,13 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 				stats.FilesSkippedBySize++
 				continue
 			}
+			sourcePath := toRealPath(env.GOOS, m)
+			if _, duplicate := candidatePaths[sourcePath]; duplicate {
+				continue
+			}
+			candidatePaths[sourcePath] = struct{}{}
 			candidates = append(candidates, Source{
-				Path:    toRealPath(env.GOOS, m),
+				Path:    sourcePath,
 				Kind:    d.Kind,
 				Size:    info.Size(),
 				ModTime: info.ModTime(),
