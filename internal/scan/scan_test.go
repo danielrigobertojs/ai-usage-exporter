@@ -8,9 +8,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -102,6 +104,24 @@ func multiEnv(ids ...string) provider.Env {
 
 func testBudget() provider.Budget {
 	return provider.DefaultBudget(time.Now())
+}
+
+// osRootFS mirrors provider.realFS for a test that needs a real SQLite file.
+// Env.FS receives virtual slash-separated paths without a leading slash; on
+// Windows those paths retain the drive letter and cannot be opened through
+// os.DirFS("/").
+type osRootFS struct {
+	goos string
+}
+
+func (r osRootFS) Open(name string) (fs.File, error) {
+	if !fs.ValidPath(name) {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+	}
+	if r.goos == "windows" {
+		return os.Open(strings.ReplaceAll(name, "/", `\`))
+	}
+	return os.Open("/" + name)
 }
 
 // TestRunSumsAcrossProvidersAndFillsPerTool covers step 3: two providers'
@@ -368,6 +388,7 @@ func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
 		available   bool
 		staleReason string
 		wantTokens  int64
+		wantFiles   int
 	}{
 		{
 			name: "empty current generation is available and stale",
@@ -379,6 +400,7 @@ func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
 			},
 			available:   true,
 			staleReason: "no_usage_events",
+			wantFiles:   1,
 		},
 		{
 			name: "current generation with no assistant rows is available and stale",
@@ -390,6 +412,7 @@ func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
 			},
 			available:   true,
 			staleReason: "no_usage_events",
+			wantFiles:   1,
 		},
 		{
 			name: "current generation with assistant rows is available and not stale",
@@ -401,12 +424,14 @@ func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
 			},
 			available:  true,
 			wantTokens: 18,
+			wantFiles:  1,
 		},
 		{
 			name: "no generation tables is unavailable and not stale",
 			build: func(dir string) (string, error) {
 				return testdata.BuildWithoutGeneration(dir)
 			},
+			wantFiles: 1,
 		},
 	}
 
@@ -423,7 +448,7 @@ func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
 			reg := provider.NewRegistry()
 			mustRegister(t, reg, opencode.New())
 			result, err := Run(context.Background(), reg, provider.Env{
-				GOOS: "linux",
+				GOOS: runtime.GOOS,
 				Home: "/unused",
 				Getenv: func(name string) string {
 					if name == "OPENCODE_DATA_HOME" {
@@ -431,13 +456,16 @@ func TestRunOpenCodeCurrentGenerationAvailability(t *testing.T) {
 					}
 					return ""
 				},
-				FS: os.DirFS("/"),
+				FS: osRootFS{goos: runtime.GOOS},
 			}, testBudget(), now, time.UTC)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 
 			got := result.PerTool["opencode"]
+			if got.FilesScanned != tt.wantFiles {
+				t.Errorf("FilesScanned = %d, want %d; fixture database must be discovered", got.FilesScanned, tt.wantFiles)
+			}
 			if got.Available != tt.available {
 				t.Errorf("Available = %t, want %t", got.Available, tt.available)
 			}
