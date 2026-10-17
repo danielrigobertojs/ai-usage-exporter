@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"path"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -74,7 +75,7 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 	override := resolveHomeOverride(d, env)
 
 	var stats Stats
-	resolvedRoots := make(map[string]struct{})
+	resolvedRoots := make(map[string]string)
 	candidatePaths := make(map[string]struct{})
 	var candidates []Source
 
@@ -87,7 +88,8 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 			continue
 		}
 		root := path.Join(base, spec.Rel)
-		resolvedRoots[toRealPath(env.GOOS, root)] = struct{}{}
+		rootPath := toRealPath(env.GOOS, root)
+		resolvedRoots[canonicalPathKey(env.GOOS, rootPath)] = rootPath
 		pattern := path.Join(root, spec.Glob)
 
 		matches, err := doublestar.Glob(env.FS, pattern)
@@ -111,6 +113,12 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 				stats.FilesSkippedByType++
 				continue
 			}
+			sourcePath := toRealPath(env.GOOS, m)
+			sourceKey := canonicalPathKey(env.GOOS, sourcePath)
+			if _, duplicate := candidatePaths[sourceKey]; duplicate {
+				continue
+			}
+			candidatePaths[sourceKey] = struct{}{}
 			stats.FilesSeen++
 			// MaxBytesFile bounds how much a streaming Provider.Parse has to
 			// read sequentially into memory. A SourceSQLite candidate is
@@ -123,11 +131,6 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 				stats.FilesSkippedBySize++
 				continue
 			}
-			sourcePath := toRealPath(env.GOOS, m)
-			if _, duplicate := candidatePaths[sourcePath]; duplicate {
-				continue
-			}
-			candidatePaths[sourcePath] = struct{}{}
 			candidates = append(candidates, Source{
 				Path:    sourcePath,
 				Kind:    d.Kind,
@@ -178,10 +181,20 @@ func Discover(ctx context.Context, d Descriptor, env Env, b Budget) ([]Source, S
 			totalBytes += c.Size
 		}
 	}
-	for root := range resolvedRoots {
+	for _, root := range resolvedRoots {
 		stats.ResolvedRoots = append(stats.ResolvedRoots, root)
 	}
 	sort.Strings(stats.ResolvedRoots)
 
 	return sources, stats, nil
+}
+
+// canonicalPathKey returns the equality key for a source path. Windows paths
+// are case-insensitive under the normal NTFS semantics, so a path reached via
+// two environment variables with different casing still denotes one file.
+func canonicalPathKey(goos, sourcePath string) string {
+	if goos == "windows" {
+		return strings.ToLower(sourcePath)
+	}
+	return sourcePath
 }
