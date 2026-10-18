@@ -1,4 +1,4 @@
-#ADR-004: Normalization of token classes by provider
+# ADR-004: Normalization of token classes by provider
 
 - Date: 2026-10-06
 - Status: Accepted
@@ -6,6 +6,9 @@
 nesting your counters
 - Updated 2026-10-07: OpenCode convention is not uniform; see the
 evidence from `opencode-go`/`kimi-k2.5` below
+- Updated 2026-10-18: current OpenCode messages no longer declare
+  `tokens.total`; nesting is now proven from the matching legacy message's
+  declared total, never from a model list.
 
 ## Context
 
@@ -85,9 +88,13 @@ cache_read = Δcached_input_tokens
 output     = max(0, Δoutput_tokens - Δreasoning_output_tokens)
 reasoning  = Δreasoning_output_tokens
 
-# OpenCode: map directly unless reasoning is nested, which is decided
-# per record from the arithmetic declared by that record
-nested := tokens.total presente && tokens.total == i + o + cache.read + cache.write && reasoning > 0
+# OpenCode: the current generation is the only source of events. For its
+# matching message ID, legacy tokens.total is evidence only; it is not an
+# additional event and no other legacy field is read.
+#
+# Nested only with positive proof. Missing legacy row, missing total, or
+# arithmetic that does not match is additive. Never use a model allowlist.
+nested := legacy.tokens.total presente && legacy.tokens.total == i + o + cache.read + cache.write && reasoning > 0
 input       = input
 cache_read  = cache.read
 cache_write = cache.write
@@ -120,12 +127,14 @@ of an invariant that ignores it fails on real data; one who treats her like
 approved without further ado loses the signal if the case grows. The correct way to
 fixing it is an explicit fixture with that arithmetic (JCB-323).
 
-OpenCode rule is derived from the registry, not a list of models
-handheld: if `total` already fits without `reasoning`, then `reasoning`
-it travels inside `output` and must be subtracted. A new model with the convention
-nested is covered without touching code. When `total` is missing there is no signal, and
-the default is additive (not subtracting), which is the 7865/7865 register convention
-of additive providers.
+The OpenCode rule is derived from declared data, not a handwritten model
+list: if the matching legacy row's `total` already fits without `reasoning`,
+then `reasoning` travels inside `output` and must be subtracted. A new model
+with the nested convention is covered without touching code. The current
+generation remains authoritative for event membership and all emitted fields;
+the legacy generation supplies only this one numeric proof. When the matching
+legacy row or its `total` is missing, there is no proof and the default is
+additive (not subtracting).
 
 Codex does not expose `cache_write`; is ignored instead of being output as 0, so that
 the absence of the data is distinguished from a measured value of zero.
@@ -168,5 +177,7 @@ a pass on real data that shows `events > 0`. The subcommand
 `doctor` (JCB-315) exposes events emitted and tokens summed by provider
 precisely so that "I found files and issued 0 events" is visible in
 instead of being a silent zero.
-- `docs/metrics.md` does not change: the disjunction invariant was correct. It
-What was missing was this mapping by provider.
+- `docs/metrics.md` documents the nested-reasoning interpretation alongside
+  the disjointness invariant, so an absent `reasoning` series for a model is
+  understood as no measured standalone reasoning rather than a zero-filled
+  series.

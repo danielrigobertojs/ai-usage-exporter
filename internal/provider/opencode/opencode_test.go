@@ -327,6 +327,86 @@ func TestParseSchemaGenerationAuthority(t *testing.T) {
 	}
 }
 
+// TestParseCurrentReasoningUsesLegacyTotalEvidence covers the current
+// session_message schema, which does not declare tokens.total. A matching
+// legacy row is evidence only: it must never become an event or turn an
+// unproven current row into nested reasoning.
+func TestParseCurrentReasoningUsesLegacyTotalEvidence(t *testing.T) {
+	tests := []struct {
+		name       string
+		legacyData string
+		wantOutput int64
+		wantReason int64
+	}{
+		{
+			name:       "kimi k2.5 nested when legacy total excludes reasoning",
+			legacyData: `{"role":"assistant","tokens":{"total":130}}`,
+			wantOutput: 10,
+			wantReason: 20,
+		},
+		{
+			name:       "additive when legacy total includes reasoning",
+			legacyData: `{"role":"assistant","tokens":{"total":150}}`,
+			wantOutput: 30,
+			wantReason: 20,
+		},
+		{
+			name:       "additive when legacy total is absent",
+			legacyData: `{"role":"assistant","tokens":{}}`,
+			wantOutput: 30,
+			wantReason: 20,
+		},
+		{
+			name:       "additive when matching legacy row is absent",
+			legacyData: "",
+			wantOutput: 30,
+			wantReason: 20,
+		},
+	}
+
+	const currentData = `{"time":{"created":1791804042674},"model":{"id":"kimi-k2.5","providerID":"opencode-go"},"tokens":{"input":100,"output":30,"reasoning":20,"cache":{"read":0,"write":0}}}`
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path, err := testdata.BuildBoth(t.TempDir(),
+				[]testdata.V2Session{{ID: "current", Directory: "/home/user/projects/current"}},
+				[]testdata.V2Message{{ID: "kimi", SessionID: "current", Type: "assistant", Data: currentData}},
+			)
+			if err != nil {
+				t.Fatalf("build fixture: %v", err)
+			}
+
+			if tt.legacyData != "" {
+				db, err := sql.Open("sqlite", "file:"+path)
+				if err != nil {
+					t.Fatalf("open fixture: %v", err)
+				}
+				_, err = db.Exec(`
+INSERT INTO session (id, directory) VALUES ('legacy', '/home/user/projects/legacy');
+INSERT INTO message (id, session_id, time_created, time_updated, data)
+VALUES ('kimi', 'legacy', 0, 0, ?);`, tt.legacyData)
+				if closeErr := db.Close(); closeErr != nil && err == nil {
+					err = closeErr
+				}
+				if err != nil {
+					t.Fatalf("insert legacy metadata: %v", err)
+				}
+			}
+
+			events := parseAll(t, path)
+			if len(events) != 1 {
+				t.Fatalf("Parse emitted %d events, want one current event", len(events))
+			}
+			got := events[0]
+			if got.Key.MessageID != "kimi" {
+				t.Fatalf("MessageID = %q, want kimi", got.Key.MessageID)
+			}
+			if got.Tokens[model.TokenOutput] != tt.wantOutput || got.Tokens[model.TokenReasoning] != tt.wantReason {
+				t.Errorf("tokens = output %d reasoning %d, want output %d reasoning %d", got.Tokens[model.TokenOutput], got.Tokens[model.TokenReasoning], tt.wantOutput, tt.wantReason)
+			}
+		})
+	}
+}
+
 // TestParseV2ContentIsNeverDecoded protects the v2 privacy boundary. The
 // test fails both if content is added to messageData and if any emitted event
 // acquires a route for that literal model-reasoning text.
