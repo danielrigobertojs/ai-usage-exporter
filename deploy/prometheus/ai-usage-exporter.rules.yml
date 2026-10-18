@@ -23,9 +23,10 @@ groups:
           summary: AI usage exporter scan is failing
           description: The exporter has not produced a complete safe snapshot for five minutes.
 
-      # Ten minutes prevents a short-lived source access issue from paging.
+      # Only providers observed as available in the last day can be unavailable:
+      # an uninstalled tool reports zero files and must not page indefinitely.
       - alert: AIUsageProviderUnavailable
-        expr: ai_usage_provider_available == 0
+        expr: ai_usage_provider_available == 0 and on (instance, tool) max_over_time(ai_usage_provider_available[24h]) == 1
         for: 10m
         labels:
           severity: warning
@@ -44,8 +45,9 @@ groups:
           summary: AI usage provider has no parsed usage events
           description: The provider is readable but has continuously produced no usage events.
 
-      # The timestamp advances after each successful scan. Five minutes allows
-      # several 60-second scan intervals before a frozen snapshot is reported.
+      # The timestamp advances after each successful scan. This 300-second
+      # threshold assumes the default 60-second scan interval; keep it above a
+      # configured interval before deploying a non-default scan schedule.
       - alert: AIUsageScanStale
         expr: time() - ai_usage_scan_timestamp_seconds > 300
         for: 5m

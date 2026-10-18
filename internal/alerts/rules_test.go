@@ -126,7 +126,7 @@ func TestAlertRulesCoverExpectedFailureSignals(t *testing.T) {
 	}{
 		"AIUsageExporterDown":          {`up{job="ai-usage-exporter"} == 0`, "5m"},
 		"AIUsageScanFailed":            {"ai_usage_scan_success == 0", "5m"},
-		"AIUsageProviderUnavailable":   {"ai_usage_provider_available == 0", "10m"},
+		"AIUsageProviderUnavailable":   {"ai_usage_provider_available == 0 and on (instance, tool) max_over_time(ai_usage_provider_available[24h]) == 1", "10m"},
 		"AIUsageProviderNoUsageEvents": {`max by (instance, tool) (ai_usage_provider_stale{reason="no_usage_events"}) == 1`, "10m"},
 		"AIUsageScanStale":             {"time() - ai_usage_scan_timestamp_seconds > 300", "5m"},
 	}
@@ -145,6 +145,20 @@ func TestAlertRulesCoverExpectedFailureSignals(t *testing.T) {
 	for alert := range want {
 		t.Errorf("missing alert %q", alert)
 	}
+}
+
+func TestProviderUnavailableRequiresPriorAvailability(t *testing.T) {
+	for _, rule := range loadRules(t) {
+		if rule.Alert != "AIUsageProviderUnavailable" {
+			continue
+		}
+		want := "ai_usage_provider_available == 0 and on (instance, tool) max_over_time(ai_usage_provider_available[24h]) == 1"
+		if rule.Expr != want {
+			t.Errorf("AIUsageProviderUnavailable expression = %q, want %q", rule.Expr, want)
+		}
+		return
+	}
+	t.Fatal("AIUsageProviderUnavailable rule is missing")
 }
 
 func TestNoUsageEventsAlertExcludesIdleReason(t *testing.T) {

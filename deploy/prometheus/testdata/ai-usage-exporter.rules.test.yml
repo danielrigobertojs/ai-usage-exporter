@@ -1,0 +1,33 @@
+rule_files:
+  - ai-usage-exporter.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: unavailable provider that was never installed does not alert
+    interval: 1m
+    input_series:
+      - series: 'ai_usage_provider_available{instance="host-never-installed",tool="codex"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 29m
+        alertname: AIUsageProviderUnavailable
+        exp_alerts: []
+
+  - name: provider that becomes unavailable alerts after its for duration
+    interval: 1m
+    input_series:
+      - series: 'ai_usage_provider_available{instance="host-provider-failed",tool="codex"}'
+        values: '1x10 0x20'
+    alert_rule_test:
+      - eval_time: 29m
+        alertname: AIUsageProviderUnavailable
+        exp_alerts:
+          - exp_labels:
+              alertname: AIUsageProviderUnavailable
+              instance: host-provider-failed
+              severity: warning
+              tool: codex
+            exp_annotations:
+              summary: AI usage provider source is unavailable
+              description: The provider source has not been readable for ten minutes.
