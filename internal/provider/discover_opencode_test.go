@@ -22,12 +22,16 @@ func TestDiscoverOpenCodeDeduplicatesOverlappingRoots(t *testing.T) {
 		env             map[string]string
 		path            string
 		caseInsensitive bool
+		wantSources     int
+		wantFilesSeen   int
 	}{
 		{
-			name: "windows OPENCODE_DATA_HOME applies to both roots",
-			goos: "windows",
-			env:  map[string]string{"OPENCODE_DATA_HOME": "/virtual/data"},
-			path: "virtual/data/opencode/opencode.db",
+			name:          "windows OPENCODE_DATA_HOME applies to both roots",
+			goos:          "windows",
+			env:           map[string]string{"OPENCODE_DATA_HOME": "/virtual/data"},
+			path:          "virtual/data/opencode/opencode.db",
+			wantSources:   1,
+			wantFilesSeen: 1,
 		},
 		{
 			name: "windows XDG_DATA_HOME and LOCALAPPDATA overlap case insensitively",
@@ -38,6 +42,8 @@ func TestDiscoverOpenCodeDeduplicatesOverlappingRoots(t *testing.T) {
 			},
 			path:            "virtual/data/opencode/opencode.db",
 			caseInsensitive: true,
+			wantSources:     1,
+			wantFilesSeen:   1,
 		},
 		{
 			name: "windows XDG_DATA_HOME and LOCALAPPDATA overlap",
@@ -46,21 +52,34 @@ func TestDiscoverOpenCodeDeduplicatesOverlappingRoots(t *testing.T) {
 				"XDG_DATA_HOME": "/virtual/data",
 				"LOCALAPPDATA":  "/virtual/data",
 			},
-			path: "virtual/data/opencode/opencode.db",
+			path:          "virtual/data/opencode/opencode.db",
+			wantSources:   1,
+			wantFilesSeen: 1,
 		},
 		{
-			name: "darwin OPENCODE_DATA_HOME has one root",
-			goos: "darwin",
-			env:  map[string]string{"OPENCODE_DATA_HOME": "/virtual/data"},
-			path: "virtual/data/opencode/opencode.db",
+			name:          "darwin OPENCODE_DATA_HOME has one root",
+			goos:          "darwin",
+			env:           map[string]string{"OPENCODE_DATA_HOME": "/virtual/data"},
+			path:          "virtual/data/opencode/opencode.db",
+			wantSources:   1,
+			wantFilesSeen: 1,
+		},
+		{
+			name:          "windows OpenCode database is absent",
+			goos:          "windows",
+			env:           map[string]string{"OPENCODE_DATA_HOME": "/virtual/data"},
+			wantSources:   0,
+			wantFilesSeen: 0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			filesystem := fs.FS(fstest.MapFS{
-				tt.path: {Data: []byte("SQLite format 3"), ModTime: time.Now()},
-			})
+			files := fstest.MapFS{}
+			if tt.path != "" {
+				files[tt.path] = &fstest.MapFile{Data: []byte("SQLite format 3"), ModTime: time.Now()}
+			}
+			filesystem := fs.FS(files)
 			if tt.caseInsensitive {
 				filesystem = caseInsensitiveFS{inner: filesystem}
 			}
@@ -79,8 +98,11 @@ func TestDiscoverOpenCodeDeduplicatesOverlappingRoots(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Discover: %v", err)
 			}
-			if got := len(sources); got != 1 {
-				t.Fatalf("len(sources) = %d, want 1", got)
+			if got := len(sources); got != tt.wantSources {
+				t.Fatalf("len(sources) = %d, want %d", got, tt.wantSources)
+			}
+			if got := stats.FilesSeen; got != tt.wantFilesSeen {
+				t.Errorf("FilesSeen = %d, want %d", got, tt.wantFilesSeen)
 			}
 			if got := len(stats.ResolvedRoots); got != 1 {
 				t.Errorf("len(ResolvedRoots) = %d, want 1", got)
