@@ -31,6 +31,10 @@ type alertRule struct {
 	For   string `yaml:"for"`
 }
 
+type ruleTestFile struct {
+	RuleFiles []string `yaml:"rule_files"`
+}
+
 var metricName = regexp.MustCompile(`ai_usage_[a-zA-Z0-9_]*`)
 
 func loadRules(t *testing.T) []alertRule {
@@ -73,6 +77,34 @@ func TestPrometheusConfigurationLoadsAlertRules(t *testing.T) {
 	}
 	if len(config.RuleFiles) != 1 || config.RuleFiles[0] != "ai-usage-exporter.rules.yml" {
 		t.Errorf("rule_files = %v, want [ai-usage-exporter.rules.yml]", config.RuleFiles)
+	}
+}
+
+func TestRuleTestFixtureLoadsShippedRules(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not resolve path of rules_test.go")
+	}
+	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
+	fixturePath := filepath.Join(repoRoot, "deploy", "prometheus", "testdata", "ai-usage-exporter.rules.test.yml")
+	raw, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatalf("reading Prometheus rule test fixture: %v", err)
+	}
+
+	var fixture ruleTestFile
+	if err := yaml.Unmarshal(raw, &fixture); err != nil {
+		t.Fatalf("parsing Prometheus rule test fixture: %v", err)
+	}
+	if len(fixture.RuleFiles) != 1 || fixture.RuleFiles[0] != "../ai-usage-exporter.rules.yml" {
+		t.Fatalf("fixture rule_files = %v, want [../ai-usage-exporter.rules.yml]", fixture.RuleFiles)
+	}
+	resolved := filepath.Clean(filepath.Join(filepath.Dir(fixturePath), fixture.RuleFiles[0]))
+	if resolved != filepath.Join(repoRoot, "deploy", "prometheus", "ai-usage-exporter.rules.yml") {
+		t.Fatalf("fixture rule file resolves to %s, want shipped rule file", resolved)
+	}
+	if _, err := os.Stat(resolved); err != nil {
+		t.Fatalf("fixture rule file %s is not readable: %v", resolved, err)
 	}
 }
 

@@ -108,9 +108,11 @@ alerts use ten minutes so a transient scan problem cannot page before the next
 
 `AIUsageProviderUnavailable` only alerts for a provider that was available in
 the preceding 24 hours, so a tool that is not installed on a host does not
-produce a permanent alert. `AIUsageScanStale` uses a 300-second threshold for
-the default 60-second scan interval; increase that threshold to exceed any
-larger `AI_USAGE_SCAN_INTERVAL` before deploying it.
+produce a permanent alert. A provider that has never been available is
+indistinguishable from an uninstalled tool in this metric; inspect
+`ai_usage_scan_errors` when diagnosing that state. `AIUsageScanStale` uses a
+300-second threshold for the default 60-second scan interval; increase that
+threshold to exceed any larger `AI_USAGE_SCAN_INTERVAL` before deploying it.
 
 To run the optional Prometheus rule-evaluation fixtures locally (without adding
 a Go dependency), use the Prometheus image:
@@ -120,6 +122,8 @@ docker run --rm --entrypoint /bin/promtool \
   -v "$PWD/deploy/prometheus:/etc/prometheus:ro" -w /etc/prometheus \
   prom/prometheus:v3.0.1 test rules testdata/ai-usage-exporter.rules.test.yml
 ```
+
+A successful run reports `SUCCESS`; CI runs this same fixture on Linux.
 
 ### What not to do with usage series
 

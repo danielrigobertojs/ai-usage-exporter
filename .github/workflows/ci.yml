@@ -36,6 +36,12 @@ jobs:
         run: go build ./...
       - name: go test
         run: go test ./... -race
+      - name: Prometheus alert rules
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm --entrypoint /bin/promtool \
+            -v "$PWD/deploy/prometheus:/etc/prometheus:ro" -w /etc/prometheus \
+            prom/prometheus:v3.0.1 test rules testdata/ai-usage-exporter.rules.test.yml
 
   cross-compile:
     runs-on: ubuntu-latest
