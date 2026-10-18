@@ -89,6 +89,21 @@ If you already have Grafana running and only want the dashboard, without this
 for another Prometheus minute. Usage metrics remain windowed gauges; they do
 not become counters.
 
+### Alert rules
+
+`deploy/prometheus/ai-usage-exporter.rules.yml` is loaded by the example
+Prometheus configuration. Its availability alert selects
+`job="ai-usage-exporter"`, which must match the `job_name` in the scrape
+configuration above. If an existing Prometheus uses another job name, set that
+selector to its exporter job name when copying the rules. The remaining rules
+select exporter metrics directly and do not depend on a job label.
+
+The rules use a five-minute `for:` for an unavailable exporter, failed scan,
+and stale scan timestamp: this tolerates short scrape/network interruptions
+while reporting a sustained outage promptly. Provider-source and no-events
+alerts use ten minutes so a transient scan problem cannot page before the next
+60-second scan has had several chances to recover.
+
 ### What not to do with usage series
 
 Usage metrics (`ai_usage_tokens`, `ai_usage_cost_usd`,
