@@ -156,7 +156,7 @@ func TestAlertRulesCoverExpectedFailureSignals(t *testing.T) {
 		expr string
 		for_ string
 	}{
-		"AIUsageExporterDown":          {`up{job="ai-usage-exporter"} == 0`, "5m"},
+		"AIUsageExporterDown":          {`up{job=~"ai-usage-exporter|ai-worker"} == 0`, "5m"},
 		"AIUsageScanFailed":            {"ai_usage_scan_success == 0", "5m"},
 		"AIUsageProviderUnavailable":   {"ai_usage_provider_available == 0 and on (instance, tool) max_over_time(ai_usage_provider_available[24h]) == 1", "10m"},
 		"AIUsageProviderNoUsageEvents": {`max by (instance, tool) (ai_usage_provider_stale{reason="no_usage_events"}) == 1`, "10m"},

@@ -4,7 +4,7 @@ groups:
       # Five minutes absorbs brief scrape/network flaps while making a sustained
       # unavailable exporter actionable.
       - alert: AIUsageExporterDown
-        expr: up{job="ai-usage-exporter"} == 0
+        expr: up{job=~"ai-usage-exporter|ai-worker"} == 0
         for: 5m
         labels:
           severity: warning

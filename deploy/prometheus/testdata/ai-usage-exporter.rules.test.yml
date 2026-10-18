@@ -4,6 +4,42 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  - name: exporter down alerts for the example job
+    interval: 1m
+    input_series:
+      - series: 'up{instance="host-example-job",job="ai-usage-exporter"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: AIUsageExporterDown
+        exp_alerts:
+          - exp_labels:
+              alertname: AIUsageExporterDown
+              instance: host-example-job
+              job: ai-usage-exporter
+              severity: warning
+            exp_annotations:
+              summary: AI usage exporter is unreachable
+              description: Prometheus has been unable to scrape this exporter for five minutes.
+
+  - name: exporter down alerts for the worker job
+    interval: 1m
+    input_series:
+      - series: 'up{instance="host-worker-job",job="ai-worker"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: AIUsageExporterDown
+        exp_alerts:
+          - exp_labels:
+              alertname: AIUsageExporterDown
+              instance: host-worker-job
+              job: ai-worker
+              severity: warning
+            exp_annotations:
+              summary: AI usage exporter is unreachable
+              description: Prometheus has been unable to scrape this exporter for five minutes.
+
   - name: unavailable provider that was never installed does not alert
     interval: 1m
     input_series:
