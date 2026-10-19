@@ -333,10 +333,11 @@ func TestParseSchemaGenerationAuthority(t *testing.T) {
 // unproven current row into nested reasoning.
 func TestParseCurrentReasoningUsesLegacyTotalEvidence(t *testing.T) {
 	tests := []struct {
-		name       string
-		legacyData string
-		wantOutput int64
-		wantReason int64
+		name        string
+		currentData string
+		legacyData  string
+		wantOutput  int64
+		wantReason  int64
 	}{
 		{
 			name:       "kimi k2.5 nested when legacy total excludes reasoning",
@@ -362,14 +363,43 @@ func TestParseCurrentReasoningUsesLegacyTotalEvidence(t *testing.T) {
 			wantOutput: 30,
 			wantReason: 20,
 		},
+		{
+			name:       "additive when legacy JSON is truncated",
+			legacyData: `{"role":"assistant","tokens":`,
+			wantOutput: 30,
+			wantReason: 20,
+		},
+		{
+			name:       "additive when legacy total is text",
+			legacyData: `{"role":"assistant","tokens":{"total":"many"}}`,
+			wantOutput: 30,
+			wantReason: 20,
+		},
+		{
+			name:       "additive when legacy total is real",
+			legacyData: `{"role":"assistant","tokens":{"total":150.5}}`,
+			wantOutput: 30,
+			wantReason: 20,
+		},
+		{
+			name:        "nested reasoning above output clamps to zero",
+			currentData: `{"time":{"created":1791804042674},"model":{"id":"kimi-k2.5","providerID":"opencode-go"},"tokens":{"input":100,"output":5,"reasoning":20,"cache":{"read":0,"write":0}}}`,
+			legacyData:  `{"role":"assistant","tokens":{"total":105}}`,
+			wantOutput:  0,
+			wantReason:  20,
+		},
 	}
 
 	const currentData = `{"time":{"created":1791804042674},"model":{"id":"kimi-k2.5","providerID":"opencode-go"},"tokens":{"input":100,"output":30,"reasoning":20,"cache":{"read":0,"write":0}}}`
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			data := currentData
+			if tt.currentData != "" {
+				data = tt.currentData
+			}
 			path, err := testdata.BuildBoth(t.TempDir(),
 				[]testdata.V2Session{{ID: "current", Directory: "/home/user/projects/current"}},
-				[]testdata.V2Message{{ID: "kimi", SessionID: "current", Type: "assistant", Data: currentData}},
+				[]testdata.V2Message{{ID: "kimi", SessionID: "current", Type: "assistant", Data: data}},
 			)
 			if err != nil {
 				t.Fatalf("build fixture: %v", err)

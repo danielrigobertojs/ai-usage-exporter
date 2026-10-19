@@ -131,7 +131,10 @@ SELECT m.id, m.session_id, m.data, s.directory,
                WHERE json_extract(content.value, '$.type') = 'tool'
        ) AS tool_calls,
        legacy.id AS legacy_id,
-       json_extract(legacy.data, '$.tokens.total') AS legacy_total
+       CASE WHEN json_valid(legacy.data)
+                 AND json_type(legacy.data, '$.tokens.total') = 'integer'
+            THEN json_extract(legacy.data, '$.tokens.total')
+       END AS legacy_total
 FROM %s m JOIN %s s ON s.id = m.session_id
 LEFT JOIN message legacy ON legacy.id = m.id
 WHERE m.type = 'assistant' AND json_valid(m.data)
