@@ -124,6 +124,13 @@ provider is responsible for preserving it while normalizing its native format:
   Codex, whose `last_input_tokens` includes `last_cached_tokens`; this is the
   OpenAI API convention, where `cached_tokens` is a `prompt_tokens` detail)
   must subtract the cached portion before emitting `input`, flooring at zero.
+- OpenCode can report `reasoning` nested inside `output`. It is emitted as its
+  own class and subtracted from `output` only when the matching legacy row for
+  the authoritative current message positively proves that its declared
+  `tokens.total` excludes reasoning. Without that proof, reasoning is
+  additive. This is evidence per message, never a model allowlist; a model
+  with nested reasoning keeps those tokens in the `reasoning` class exactly
+  once, while its `output` value is reduced by the same amount.
 
 This is a contract rather than a detail of each provider for two reasons:
 

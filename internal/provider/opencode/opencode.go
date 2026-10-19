@@ -94,7 +94,9 @@ SELECT m.id, m.session_id, m.data, s.directory,
                WHERE p.message_id = m.id
                  AND json_valid(p.data)
                  AND json_extract(p.data, '$.type') = 'tool'
-       ) AS tool_calls
+       ) AS tool_calls,
+       m.id AS legacy_id,
+       json_extract(m.data, '$.tokens.total') AS legacy_total
 FROM message m JOIN session s ON s.id = m.session_id
 WHERE json_valid(m.data) AND json_extract(m.data, '$.role') = 'assistant'
 ORDER BY m.id`
@@ -109,8 +111,32 @@ SELECT m.id, m.session_id, m.data, s.directory,
                SELECT COUNT(*)
                FROM json_each(m.data, '$.content') content
                WHERE json_extract(content.value, '$.type') = 'tool'
-       ) AS tool_calls
+       ) AS tool_calls,
+       NULL AS legacy_id,
+       NULL AS legacy_total
 FROM %s m JOIN %s s ON s.id = m.session_id
+WHERE m.type = 'assistant' AND json_valid(m.data)
+ORDER BY m.id`
+
+// currentWithLegacyMetadataQuery is deliberately a narrow, indexed lookup
+// into the obsolete generation. The current generation remains the sole
+// source of events; the legacy row contributes only its matching ID and
+// tokens.total as evidence for the representation of reasoning. In
+// particular, this query never projects legacy content, role, path, or model.
+const currentWithLegacyMetadataQuery = `
+SELECT m.id, m.session_id, m.data, s.directory,
+       (
+               SELECT COUNT(*)
+               FROM json_each(m.data, '$.content') content
+               WHERE json_extract(content.value, '$.type') = 'tool'
+       ) AS tool_calls,
+       legacy.id AS legacy_id,
+       CASE WHEN json_valid(legacy.data)
+                 AND json_type(legacy.data, '$.tokens.total') = 'integer'
+            THEN json_extract(legacy.data, '$.tokens.total')
+       END AS legacy_total
+FROM %s m JOIN %s s ON s.id = m.session_id
+LEFT JOIN message legacy ON legacy.id = m.id
 WHERE m.type = 'assistant' AND json_valid(m.data)
 ORDER BY m.id`
 
@@ -220,7 +246,7 @@ ORDER BY rowid DESC`)
 	}
 	for _, message := range messages {
 		for _, session := range sessions {
-			query := fmt.Sprintf(currentQuery, quoteIdentifier(message.name), quoteIdentifier(session.name))
+			query := currentSchemaQuery(message.name, session.name, legacyMessage)
 			ok, err := schemaHasAssistantRows(ctx, db, message.name, session.name)
 			if err != nil {
 				return "", err
@@ -244,7 +270,14 @@ ORDER BY rowid DESC`)
 			return legacyQuery, nil
 		}
 	}
-	return fmt.Sprintf(currentQuery, quoteIdentifier(messages[0].name), quoteIdentifier(sessions[0].name)), nil
+	return currentSchemaQuery(messages[0].name, sessions[0].name, legacyMessage), nil
+}
+
+func currentSchemaQuery(messageTable, sessionTable string, hasLegacyMessage bool) string {
+	if hasLegacyMessage {
+		return fmt.Sprintf(currentWithLegacyMetadataQuery, quoteIdentifier(messageTable), quoteIdentifier(sessionTable))
+	}
+	return fmt.Sprintf(currentQuery, quoteIdentifier(messageTable), quoteIdentifier(sessionTable))
 }
 
 // legacyHasAssistantRows verifies that the legacy pair, rather than merely
@@ -318,20 +351,14 @@ func quoteIdentifier(identifier string) string {
 	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
 }
 
-// reasoningNested reports whether this record's own arithmetic shows
-// reasoning tokens counted twice: once inside tokens.output and once inside
-// tokens.reasoning. Per ADR-004, OpenCode does not use one convention across
-// models - opencode-go/kimi-k2.5 nests reasoning inside output, every other
-// provider/model pair observed on real data is additive - so the decision
-// is derived from the record's own declared total, never a hardcoded model
-// list. When total is absent there is no arithmetic to check, and the
-// default is additive (false): 533/673 such records are reasoning>0 rows
-// from opencode/grok-code, an additive pair in every record that does
-// declare a total, and the remaining 140 have reasoning == 0 where the
-// convention makes no difference.
-func (d messageData) reasoningNested() bool {
+// reasoningNested reports whether arithmetic from the authoritative
+// message's matching legacy metadata proves reasoning is inside output. The
+// old generation never supplies an event; its declared total is evidence
+// only. Missing metadata or arithmetic that does not match defaults to
+// additive, and the rule deliberately has no model allowlist.
+func (d messageData) reasoningNested(total *int64) bool {
 	t := d.Tokens
-	return t.Total != nil && *t.Total == t.Input+t.Output+t.Cache.Read+t.Cache.Write && t.Reasoning > 0
+	return total != nil && *total == t.Input+t.Output+t.Cache.Read+t.Cache.Write && t.Reasoning > 0
 }
 
 // Parse reads a single opencode.db Source read-only and emits one
@@ -366,7 +393,9 @@ func (openCodeProvider) Parse(ctx context.Context, src provider.Source, emit fun
 
 		var id, sessionID, data, directory string
 		var toolCalls int64
-		if err := rows.Scan(&id, &sessionID, &data, &directory, &toolCalls); err != nil {
+		var legacyID sql.NullString
+		var legacyTotal sql.NullInt64
+		if err := rows.Scan(&id, &sessionID, &data, &directory, &toolCalls, &legacyID, &legacyTotal); err != nil {
 			return privacy.Err(toolID, filepath.Base(src.Path), 0, err)
 		}
 
@@ -375,8 +404,12 @@ func (openCodeProvider) Parse(ctx context.Context, src provider.Source, emit fun
 			continue
 		}
 
+		var total *int64
+		if legacyID.Valid && legacyTotal.Valid {
+			total = &legacyTotal.Int64
+		}
 		output := md.Tokens.Output
-		if md.reasoningNested() {
+		if md.reasoningNested(total) {
 			output = max(0, output-md.Tokens.Reasoning)
 		}
 
