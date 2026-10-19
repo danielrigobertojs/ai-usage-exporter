@@ -89,6 +89,44 @@ If you already have Grafana running and only want the dashboard, without this
 for another Prometheus minute. Usage metrics remain windowed gauges; they do
 not become counters.
 
+### Alert rules
+
+`deploy/prometheus/ai-usage-exporter.rules.yml` is loaded by the example
+Prometheus configuration. Its availability alert selects
+`job=~"ai-usage-exporter|ai-worker"`, covering the example `job_name` and the
+worker job used by the reference deployment. If an existing Prometheus uses a
+different job name, add it to this selector before copying the rules. The
+remaining rules select exporter metrics directly and do not depend on a job
+label.
+
+The rules use a five-minute `for:` for an unavailable exporter, failed scan,
+and stale scan timestamp: this tolerates short scrape/network interruptions
+while reporting a sustained outage promptly. Provider-source and no-events
+alerts use ten minutes so a transient scan problem cannot page before the next
+60-second scan has had several chances to recover.
+
+`AIUsageProviderUnavailable` only alerts for a provider that was available in
+the preceding 24 hours, so a tool that is not installed on a host does not
+produce a permanent alert. A provider that has never been available is
+indistinguishable from an uninstalled tool in this metric; inspect
+`ai_usage_scan_errors` when diagnosing that state. The same 24-hour guard
+means a continuously unavailable provider stops matching this alert after its
+last available sample ages out; the exporter cannot distinguish that state from
+an uninstalled tool without another metric. `AIUsageScanStale` uses a 300-second
+threshold for the default 60-second scan interval; increase that threshold to
+exceed any larger `AI_USAGE_SCAN_INTERVAL` before deploying it.
+
+To run the optional Prometheus rule-evaluation fixtures locally (without adding
+a Go dependency), use the Prometheus image:
+
+```bash
+docker run --rm --entrypoint /bin/promtool \
+  -v "$PWD/deploy/prometheus:/etc/prometheus:ro" -w /etc/prometheus \
+  prom/prometheus:v3.0.1 test rules testdata/ai-usage-exporter.rules.test.yml
+```
+
+A successful run reports `SUCCESS`; CI runs this same fixture on Linux.
+
 ### What not to do with usage series
 
 Usage metrics (`ai_usage_tokens`, `ai_usage_cost_usd`,

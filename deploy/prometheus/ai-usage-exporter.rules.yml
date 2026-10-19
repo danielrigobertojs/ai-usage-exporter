@@ -1,0 +1,58 @@
+groups:
+  - name: ai-usage-exporter
+    rules:
+      # Five minutes absorbs brief scrape/network flaps while making a sustained
+      # unavailable exporter actionable.
+      - alert: AIUsageExporterDown
+        expr: up{job=~"ai-usage-exporter|ai-worker"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: AI usage exporter is unreachable
+          description: Prometheus has been unable to scrape this exporter for five minutes.
+
+      # A scan runs every 60 seconds by default; five minutes leaves several
+      # complete scan attempts before notifying.
+      - alert: AIUsageScanFailed
+        expr: ai_usage_scan_success == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: AI usage exporter scan is failing
+          description: The exporter has not produced a complete safe snapshot for five minutes.
+
+      # Only providers observed as available in the last day can be unavailable:
+      # an uninstalled tool reports zero files and must not page indefinitely.
+      - alert: AIUsageProviderUnavailable
+        expr: ai_usage_provider_available == 0 and on (instance, tool) max_over_time(ai_usage_provider_available[24h]) == 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: AI usage provider source is unavailable
+          description: The provider source has not been readable for ten minutes.
+
+      # This expression is the ADR-010 liveness contract. Ten minutes permits
+      # multiple 60-second scans to recover from a transient parser problem.
+      - alert: AIUsageProviderNoUsageEvents
+        expr: max by (instance, tool) (ai_usage_provider_stale{reason="no_usage_events"}) == 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: AI usage provider has no parsed usage events
+          description: The provider is readable but has continuously produced no usage events.
+
+      # The timestamp advances after each successful scan. This 300-second
+      # threshold assumes the default 60-second scan interval; keep it above a
+      # configured interval before deploying a non-default scan schedule.
+      - alert: AIUsageScanStale
+        expr: time() - ai_usage_scan_timestamp_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: AI usage exporter snapshot is stale
+          description: The exporter has served a snapshot older than five minutes for five minutes.
