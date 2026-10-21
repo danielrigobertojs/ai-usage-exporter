@@ -155,8 +155,9 @@ the paths inside that directory. The second bind is useful when the existing
 Compose setup mounts only `prometheus.yaml`; mounting the directory is useful
 when Prometheus should read several related configuration files.
 
-Before restarting or recreating Prometheus, validate the host copies with
-`promtool`:
+Before restarting or recreating Prometheus, validate both the configuration and
+the rules with `promtool`. For a package or binary installation, where the
+configured absolute paths exist on the host, run:
 
 ```bash
 promtool check config <config-dir>/prometheus.yaml
@@ -164,10 +165,28 @@ promtool check rules <config-dir>/ai-usage-exporter.rules.yml
 ```
 
 Use the actual filename if the existing installation calls its main file
-`prometheus.yml`. A `rule_files` entry that names a path not mounted into a
-container is a startup failure, not a warning: Prometheus will not start. The
-checks above catch invalid configuration and rules before the running container
-is replaced; verify the bind mount separately when using Docker.
+`prometheus.yml`. For Docker Compose, an absolute `rule_files` path such as
+`/etc/prometheus/ai-usage-exporter.rules.yml` exists only in the container, so
+a host-side `promtool check config` cannot validate it. Run `promtool` in a
+temporary container with the same read-only mounts as the Prometheus service:
+
+```bash
+docker run --rm --entrypoint /bin/promtool \
+  -v ./config/prometheus.yaml:/etc/prometheus/prometheus.yml:ro \
+  -v ./config/ai-usage-exporter.rules.yml:/etc/prometheus/ai-usage-exporter.rules.yml:ro \
+  prom/prometheus:latest check config /etc/prometheus/prometheus.yml
+
+docker run --rm --entrypoint /bin/promtool \
+  -v ./config/prometheus.yaml:/etc/prometheus/prometheus.yml:ro \
+  -v ./config/ai-usage-exporter.rules.yml:/etc/prometheus/ai-usage-exporter.rules.yml:ro \
+  prom/prometheus:latest check rules /etc/prometheus/ai-usage-exporter.rules.yml
+```
+
+Replace `./config` and the container-side filenames with the paths used by the
+existing Compose service. A `rule_files` entry that names a path not mounted
+into a container is a startup failure, not a warning: Prometheus will not
+start. These checks validate the exact files and paths that the replacement
+container will see before it is recreated.
 
 If Prometheus was started with `--web.enable-lifecycle`, it can reload the
 updated configuration without a container restart. Otherwise there is no hot
