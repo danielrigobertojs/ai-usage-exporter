@@ -79,30 +79,38 @@ func TestNoSeriesEverCarriesASessionLabel(t *testing.T) {
 	}
 }
 
-// TestNoSeriesEverCarriesAProjectLabel documents the current state
-// honestly: aggregate.Snapshot has no per-project dimension yet (see the
-// Options.ProjectLabel doc comment in collector.go), so even with
-// ProjectLabel enabled no emitted series carries a project label today.
-// This test exists to catch the day that stops being true by accident,
-// before a real per-project series is wired in deliberately.
-func TestNoSeriesEverCarriesAProjectLabel(t *testing.T) {
+// TestUsageSeriesDoNotCarryBuildAttributionLabels keeps the static
+// attribution labels on build_info from leaking into high-cardinality usage
+// series. ProjectLabel is not wired into usage metrics yet, even when enabled.
+func TestUsageSeriesDoNotCarryBuildAttributionLabels(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		c := New(fixedCatalog(), Options{ProjectLabel: enabled})
 		c.Set(fixedResult())
 
-		if hasAnyLabelNamed(mustGather(t, c), "project") {
-			t.Errorf("ProjectLabel=%v: a series carries a %q label, but aggregate.Snapshot has no project dimension to source it from", enabled, "project")
+		for _, name := range []string{
+			"ai_usage_tokens",
+			"ai_usage_sessions",
+			"ai_usage_tool_calls",
+			"ai_usage_cost_usd",
+		} {
+			if hasLabelNamed(findFamily(mustGather(t, c), name), "project") {
+				t.Errorf("ProjectLabel=%v: usage metric %s carries project label", enabled, name)
+			}
+			if hasLabelNamed(findFamily(mustGather(t, c), name), "license") {
+				t.Errorf("ProjectLabel=%v: usage metric %s carries license label", enabled, name)
+			}
 		}
 	}
 }
 
-func hasAnyLabelNamed(families []*dto.MetricFamily, name string) bool {
-	for _, mf := range families {
-		for _, m := range mf.Metric {
-			for _, lp := range m.Label {
-				if lp.GetName() == name {
-					return true
-				}
+func hasLabelNamed(mf *dto.MetricFamily, name string) bool {
+	if mf == nil {
+		return false
+	}
+	for _, m := range mf.Metric {
+		for _, lp := range m.Label {
+			if lp.GetName() == name {
+				return true
 			}
 		}
 	}

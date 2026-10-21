@@ -16,6 +16,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/aggregate"
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/license"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/model"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/pricing"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/scan"
@@ -157,7 +158,7 @@ func TestCollectMatchesMetricsContract(t *testing.T) {
 	expected := fmt.Sprintf(`
 # HELP ai_usage_build_info Build metadata of the running binary. Value is always 1; the information is in the labels.
 # TYPE ai_usage_build_info gauge
-ai_usage_build_info{commit="%s",go_version="%s",version="%s"} 1
+ai_usage_build_info{commit="%s",go_version="%s",license="%s",project="%s",version="%s"} 1
 # HELP ai_usage_cost_usd Estimated cost in USD attributable to model within tool over window, derived from token counts and the pricing catalog in effect at scan time. Absent for a (tool, model) pair the catalog has no price for.
 # TYPE ai_usage_cost_usd gauge
 ai_usage_cost_usd{model="claude-opus-4",tool="claude-code",window="all"} 2
@@ -205,7 +206,7 @@ ai_usage_tool_calls{tool="claude-code",window="30d"} 0
 ai_usage_tool_calls{tool="claude-code",window="7d"} 0
 ai_usage_tool_calls{tool="claude-code",window="all"} 9
 ai_usage_tool_calls{tool="claude-code",window="mtd"} 0
-`, version.Commit, runtime.Version(), version.Version)
+	`, version.Commit, runtime.Version(), license.License, license.Project, version.Version)
 
 	metricNames := []string{
 		"ai_usage_tokens",
@@ -224,6 +225,27 @@ ai_usage_tool_calls{tool="claude-code",window="mtd"} 0
 
 	if err := testutil.CollectAndCompare(c, strings.NewReader(expected), metricNames...); err != nil {
 		t.Fatalf("CollectAndCompare:\n%v", err)
+	}
+}
+
+func TestBuildInfoIsSingleCompleteSeries(t *testing.T) {
+	c := New(fixedCatalog(), Options{})
+	mf := findFamily(mustGather(t, c), "ai_usage_build_info")
+	if mf == nil {
+		t.Fatal("ai_usage_build_info metric family is absent")
+	}
+	if got := len(mf.Metric); got != 1 {
+		t.Fatalf("ai_usage_build_info series = %d, want 1", got)
+	}
+	want := map[string]string{
+		"version":    version.Version,
+		"commit":     version.Commit,
+		"go_version": runtime.Version(),
+		"project":    license.Project,
+		"license":    license.License,
+	}
+	if !labelsMatch(mf.Metric[0], want) {
+		t.Errorf("ai_usage_build_info labels = %#v, want %#v", mf.Metric[0].Label, want)
 	}
 }
 

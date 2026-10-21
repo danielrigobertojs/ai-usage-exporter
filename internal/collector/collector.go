@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/aggregate"
+	"github.com/danielrigobertojs/ai-usage-exporter/internal/license"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/model"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/pricing"
 	"github.com/danielrigobertojs/ai-usage-exporter/internal/scan"
@@ -134,7 +135,7 @@ func New(cat pricing.Catalog, opts Options) *Collector {
 		buildInfo: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "", "build_info"),
 			"Build metadata of the running binary. Value is always 1; the information is in the labels.",
-			[]string{"version", "commit", "go_version"}, nil,
+			[]string{"version", "commit", "go_version", "project", "license"}, nil,
 		),
 		scanSuccessMetric: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "", "scan_success"),
@@ -225,7 +226,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	c.mu.RUnlock()
 
 	ch <- prometheus.MustNewConstMetric(c.buildInfo, prometheus.GaugeValue, 1,
-		version.Version, version.Commit, runtime.Version())
+		version.Version, version.Commit, runtime.Version(), license.Project, license.License)
 	if scanSuccess {
 		ch <- prometheus.MustNewConstMetric(c.scanSuccessMetric, prometheus.GaugeValue, 1)
 	} else {
