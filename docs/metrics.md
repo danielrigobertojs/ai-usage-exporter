@@ -30,7 +30,7 @@ never in a label.
 
 Diagnostic metrics carry their own closed label sets, which do not extend the
 contract above and must never appear on a usage series: `version`, `commit`,
-and `go_version` on `ai_usage_build_info`, and `reason` on
+`go_version`, `project`, and `license` on `ai_usage_build_info`, and `reason` on
 `ai_usage_provider_stale`. A diagnostic label is admissible only when its value
 set is closed and owned by this exporter — enumerable from our own source, not
 from the data a provider happens to contain.
@@ -360,7 +360,7 @@ this three times and use the warm runs:
 ### `ai_usage_build_info`
 
 - **Type:** gauge
-- **Labels:** `version`, `commit`, `go_version`
+- **Labels:** `version`, `commit`, `go_version`, `project`, `license`
 - **Unit:** dimensionless, always `1`
 - **Meaning:** build metadata for the running binary, following the standard
   Prometheus `*_build_info` convention. The value is always `1`; the
