@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,14 @@ func TestUpgradeExporterResolvesRelativeExecutableOutsideOperatorCWD(t *testing.
 	}
 
 	root := t.TempDir()
+	// On macOS the temporary directory is reached through /tmp, while the
+	// kernel reports the resolved /private/tmp path for the processes
+	// running from it. Comparing the executable path against the unresolved
+	// root would never match, so both sides are resolved here.
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("resolve temporary root: %v", err)
+	}
 	serverDir := filepath.Join(root, "server")
 	operatorDir := filepath.Join(root, "operator")
 	mustMkdir(t, serverDir)
@@ -46,7 +55,28 @@ func TestUpgradeExporterResolvesRelativeExecutableOutsideOperatorCWD(t *testing.
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start relative exporter: %v", err)
 	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	// The upgrade helper replaces the running exporter with a new process it
+	// starts detached ("nohup ... &"), so that replacement outlives both the
+	// helper and this test. Once the upgrade succeeds the replacement is the
+	// process owning the port, therefore stopping only the process started
+	// here would leave an orphan holding the port for the rest of the
+	// machine's life. The cleanup below stops the replacement too and fails
+	// the test if anything is still listening afterwards.
+	var replacementPID int
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		stopProcess(replacementPID)
+		if pid := waitPortReleased(port, 5*time.Second); pid != 0 {
+			// Only signal a listener that is provably one of the fixtures
+			// this test built: a process that merely reused the port is
+			// reported but never killed.
+			if path := processExecutable(pid); strings.HasPrefix(path, resolvedRoot) {
+				stopProcess(pid)
+			}
+			t.Errorf("upgrade left an exporter listening on TCP port %s (pid %d) after the test finished", port, pid)
+		}
+	})
 	waitForBuild(t, port, "old")
 	t.Logf("before: curl http://127.0.0.1:%s/metrics | grep build_info => %s", port, currentMetric(t, port))
 	t.Logf("operator cwd before: %s", lsLong(t, sentinel))
@@ -54,6 +84,11 @@ func TestUpgradeExporterResolvesRelativeExecutableOutsideOperatorCWD(t *testing.
 	upgrade := exec.Command("bash", filepath.Join(scriptDir(t), "upgrade-exporter.sh"), "--port", port, "--new-binary", new)
 	upgrade.Dir = operatorDir
 	out, err := upgrade.CombinedOutput()
+	// The helper reports the PID of the replacement it started. It is read
+	// before the failure check on purpose: when the helper fails after the
+	// replacement was launched, the replacement is still running and the
+	// cleanup has to stop it as well.
+	replacementPID = restartedPID(string(out))
 	if err != nil {
 		t.Fatalf("upgrade failed: %v\n%s", err, out)
 	}
@@ -153,4 +188,87 @@ func waitForBuild(t *testing.T, port, want string) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatalf("exporter on port %s never returned %q", port, want)
+}
+
+// restartedPID extracts the PID of the replacement exporter from the output of
+// the upgrade helper, which reports it as "Restarted PID=<pid> BINARY_PATH=...".
+func restartedPID(output string) int {
+	for _, line := range strings.Split(output, "\n") {
+		const marker = "Restarted PID="
+		index := strings.Index(line, marker)
+		if index < 0 {
+			continue
+		}
+		rest := line[index+len(marker):]
+		end := strings.IndexAny(rest, " \t")
+		if end >= 0 {
+			rest = rest[:end]
+		}
+		pid, err := strconv.Atoi(rest)
+		if err != nil {
+			continue
+		}
+		return pid
+	}
+	return 0
+}
+
+// stopProcess kills a process started outside this test's process tree. The
+// replacement exporter is detached by the upgrade helper, so it cannot be
+// waited for, only signalled.
+func stopProcess(pid int) {
+	if pid <= 0 {
+		return
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return
+	}
+	_ = process.Kill()
+}
+
+// listenerPID returns the PID of the process listening on the given TCP port,
+// or 0 when nothing is listening.
+func listenerPID(port string) int {
+	out, err := exec.Command("lsof", "-nP", "-iTCP:"+port, "-sTCP:LISTEN", "-t").Output()
+	if err != nil {
+		return 0
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return 0
+	}
+	pid, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return 0
+	}
+	return pid
+}
+
+// processExecutable returns the path of the executable running in the given
+// process, or an empty string when it cannot be determined.
+func processExecutable(pid int) string {
+	out, err := exec.Command("lsof", "-a", "-p", strconv.Itoa(pid), "-d", "txt", "-Fn").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "n") {
+			return strings.TrimPrefix(line, "n")
+		}
+	}
+	return ""
+}
+
+// waitPortReleased waits until nothing listens on the given TCP port. It
+// returns the PID of the remaining listener, or 0 when the port was released.
+func waitPortReleased(port string, timeout time.Duration) int {
+	deadline := time.Now().Add(timeout)
+	for {
+		pid := listenerPID(port)
+		if pid == 0 || !time.Now().Before(deadline) {
+			return pid
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
