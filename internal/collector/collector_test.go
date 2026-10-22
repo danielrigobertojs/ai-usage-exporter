@@ -249,6 +249,26 @@ func TestBuildInfoIsSingleCompleteSeries(t *testing.T) {
 	}
 }
 
+// TestBuildInfoProjectIsNotTheOptInUsageLabel keeps build_info's static
+// project label independent from the opt-in usage-series setting.
+func TestBuildInfoProjectIsNotTheOptInUsageLabel(t *testing.T) {
+	c := New(fixedCatalog(), Options{ProjectLabel: true})
+	mf := findFamily(mustGather(t, c), "ai_usage_build_info")
+	if mf == nil || len(mf.Metric) != 1 {
+		t.Fatalf("ai_usage_build_info series = %d, want 1", len(mf.GetMetric()))
+	}
+
+	if !labelsMatch(mf.Metric[0], map[string]string{
+		"version":    version.Version,
+		"commit":     version.Commit,
+		"go_version": runtime.Version(),
+		"project":    license.Project,
+		"license":    license.License,
+	}) {
+		t.Errorf("ai_usage_build_info labels = %#v, want fixed project %q", mf.Metric[0].Label, license.Project)
+	}
+}
+
 func TestProviderStaleStateSet(t *testing.T) {
 	tests := []struct {
 		name       string

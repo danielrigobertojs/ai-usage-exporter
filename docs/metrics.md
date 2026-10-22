@@ -37,7 +37,10 @@ from the data a provider happens to contain.
 
 `project` is **opt-in and disabled by default** (`labels.project: false` in
 the configuration). When enabled, its value is normalized and **truncated to
-48 characters**; the full on-disk project path is never used.
+48 characters**; the full on-disk project path is never used. This is the
+usage-series label only. On `ai_usage_build_info`, `project` is a different,
+always-present diagnostic label with the fixed value `ai-usage-exporter`; it is
+unaffected by `labels.project`.
 
 ### Cardinality budget
 
