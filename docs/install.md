@@ -109,6 +109,47 @@ configuration. A managed service is the recommended deployment method: an
 upgrade replaces the binary and restarts one known service. A manually started
 process can be upgraded too, but its command line must be preserved by hand.
 
+### Upgrade a host without a Go toolchain
+
+Build the portable archives on any machine that has Go, from the exact commit
+that you want to deploy. `make dist` creates the six release-compatible
+archives plus `checksums.txt`; it does not need GoReleaser or a network
+connection. Archive names are
+`ai-usage-exporter_<version>_<os>_<arch>.tar.gz` for Darwin/Linux and
+`ai-usage-exporter_<version>_<os>_<arch>.zip` for Windows.
+
+```bash
+# On the build machine, at the selected commit.
+make dist
+
+# Copy the selected archive and dist/checksums.txt to the destination host.
+# For example: scp dist/ai-usage-exporter_<version>_darwin_arm64.tar.gz \
+#   dist/checksums.txt exporter.example:/path/to/upgrade/
+```
+
+On the destination, confirm its architecture before selecting an archive, then
+verify it before extracting it. Apple Silicon reports `arm64`; Intel macOS
+reports `x86_64` and uses the `darwin_amd64` archive.
+
+```bash
+uname -m
+shasum -a 256 -c checksums.txt --ignore-missing
+tar -xzf ai-usage-exporter_<version>_darwin_arm64.tar.gz
+```
+
+Use the extracted binary with the manual-process helper below:
+
+```bash
+bash scripts/upgrade-exporter.sh --port 9477 --new-binary "$PWD/ai-usage-exporter"
+```
+
+The helper aborts without changing anything unless exactly one process listens
+on the selected port. It reproduces the listener's literal argv, so an
+invocation such as `-listen host:port` is retained automatically. The exporter
+scans before it opens its listener (typically about five seconds); after a
+restart, wait until `curl /metrics` responds before treating the upgrade as
+complete.
+
 ### Check what is running and choose the target build
 
 On the exporter host, inspect the build currently serving metrics and the
