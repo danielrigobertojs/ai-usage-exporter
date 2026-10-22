@@ -116,6 +116,83 @@ an uninstalled tool without another metric. `AIUsageScanStale` uses a 300-second
 threshold for the default 60-second scan interval; increase that threshold to
 exceed any larger `AI_USAGE_SCAN_INTERVAL` before deploying it.
 
+### Install alert rules in an existing Prometheus
+
+To add these rules to a Prometheus that is already running, copy
+`deploy/prometheus/ai-usage-exporter.rules.yml` to its configuration directory
+on the host, for example `<config-dir>/ai-usage-exporter.rules.yml`. Keep the
+rule file alongside the Prometheus configuration so it can be validated and
+deployed as one configuration change.
+
+The `rule_files` path is evaluated by the Prometheus process, not by the host.
+Add the path visible to that process to the host's `prometheus.yml` (or
+`prometheus.yaml`):
+
+```yaml
+rule_files:
+  - /etc/prometheus/ai-usage-exporter.rules.yml
+```
+
+For Prometheus installed from a package or run directly as a binary, choose the
+installed configuration directory and use the corresponding local path instead
+(for example, `<config-dir>/ai-usage-exporter.rules.yml`). Ensure that the
+Prometheus service account can read both files.
+
+For Docker Compose, copying the rule file onto the host is not enough: it must
+also be available inside the container. Either add a second bind mount, matching
+the example stack in this repository:
+
+```yaml
+services:
+  prometheus:
+    volumes:
+      - ./config/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - ./config/ai-usage-exporter.rules.yml:/etc/prometheus/ai-usage-exporter.rules.yml:ro
+```
+
+or mount the entire configuration directory, provided the configuration uses
+the paths inside that directory. The second bind is useful when the existing
+Compose setup mounts only `prometheus.yaml`; mounting the directory is useful
+when Prometheus should read several related configuration files.
+
+Before restarting or recreating Prometheus, validate both the configuration and
+the rules with `promtool`. For a package or binary installation, where the
+configured absolute paths exist on the host, run:
+
+```bash
+promtool check config <config-dir>/prometheus.yaml
+promtool check rules <config-dir>/ai-usage-exporter.rules.yml
+```
+
+Use the actual filename if the existing installation calls its main file
+`prometheus.yml`. For Docker Compose, an absolute `rule_files` path such as
+`/etc/prometheus/ai-usage-exporter.rules.yml` exists only in the container, so
+a host-side `promtool check config` cannot validate it. Run `promtool` in a
+temporary container with the same read-only mounts as the Prometheus service:
+
+```bash
+docker run --rm --entrypoint /bin/promtool \
+  -v ./config/prometheus.yaml:/etc/prometheus/prometheus.yml:ro \
+  -v ./config/ai-usage-exporter.rules.yml:/etc/prometheus/ai-usage-exporter.rules.yml:ro \
+  prom/prometheus:latest check config /etc/prometheus/prometheus.yml
+
+docker run --rm --entrypoint /bin/promtool \
+  -v ./config/prometheus.yaml:/etc/prometheus/prometheus.yml:ro \
+  -v ./config/ai-usage-exporter.rules.yml:/etc/prometheus/ai-usage-exporter.rules.yml:ro \
+  prom/prometheus:latest check rules /etc/prometheus/ai-usage-exporter.rules.yml
+```
+
+Replace `./config` and the container-side filenames with the paths used by the
+existing Compose service. A `rule_files` entry that names a path not mounted
+into a container is a startup failure, not a warning: Prometheus will not
+start. These checks validate the exact files and paths that the replacement
+container will see before it is recreated.
+
+If Prometheus was started with `--web.enable-lifecycle`, it can reload the
+updated configuration without a container restart. Otherwise there is no hot
+reload endpoint, so recreate the Compose service (or restart the service that
+runs the binary/package installation) after validation.
+
 To run the optional Prometheus rule-evaluation fixtures locally (without adding
 a Go dependency), use the Prometheus image:
 
