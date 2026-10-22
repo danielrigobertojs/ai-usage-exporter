@@ -19,6 +19,35 @@ build:
 .PHONY: cross
 cross: $(PLATFORMS)
 
+.PHONY: dist
+dist:
+	rm -rf $(DIST)
+	$(MAKE) $(PLATFORMS)
+	@set -eu; \
+	for platform in $(PLATFORMS); do \
+		os=$${platform%/*}; arch=$${platform#*/}; \
+		binary="$(BINARY)-$$os-$$arch"; stage="$(DIST)/.package"; \
+		if [ "$$os" = windows ]; then \
+			binary="$$binary.exe"; archive="$(BINARY)_$(VERSION)_$${os}_$${arch}.zip"; \
+			archive_binary="$(BINARY).exe"; \
+		else \
+			archive="$(BINARY)_$(VERSION)_$${os}_$${arch}.tar.gz"; \
+			archive_binary="$(BINARY)"; \
+		fi; \
+		rm -rf "$$stage"; mkdir -p "$$stage"; cp "$(DIST)/$$binary" "$$stage/$$archive_binary"; \
+		if [ "$$os" = windows ]; then (cd "$$stage" && zip -q "../$$archive" "$$archive_binary"); else tar -czf "$(DIST)/$$archive" -C "$$stage" "$$archive_binary"; fi; \
+		rm -rf "$$stage"; \
+		rm "$(DIST)/$$binary"; \
+	done
+	cd $(DIST) && shasum -a 256 *.tar.gz *.zip > checksums.txt
+
+.PHONY: print-version print-commit
+print-version:
+	@printf '%s\n' '$(VERSION)'
+
+print-commit:
+	@printf '%s\n' '$(COMMIT)'
+
 .PHONY: release-platforms
 release-platforms:
 	@printf '%s\n' $(PLATFORMS)

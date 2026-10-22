@@ -83,6 +83,10 @@ NEW_BINARY=$(absolute_path "$new_binary")
   echo "New binary $NEW_BINARY does not exist or is not executable." >&2
   exit 1
 }
+[[ "$NEW_BINARY" -ef "$BINARY_PATH" ]] && {
+  echo "New binary $NEW_BINARY is already the listener executable; refusing to stop PID $pid." >&2
+  exit 1
+}
 
 printf 'PID=%s\nCWD=%s\nBINARY_PATH=%s\nCOMMAND=%s\n' "$pid" "$LISTENER_CWD" "$BINARY_PATH" "$OLD_COMMAND"
 
@@ -115,6 +119,7 @@ while kill -0 "$pid" 2>/dev/null; do
   sleep 1
 done
 
+cd "$LISTENER_CWD"
 nohup "$BINARY_PATH" "${argv[@]}" >"$LISTENER_CWD/ai-usage-exporter.log" 2>&1 &
 
 for _ in $(seq 1 30); do
