@@ -108,7 +108,49 @@ func TestUpgradeExporterResolvesRelativeExecutableOutsideOperatorCWD(t *testing.
 	if string(got) != "do not replace me\n" {
 		t.Fatalf("operator-cwd binary was overwritten: %q", got)
 	}
+	if got := processCWD(t, replacementPID); got != filepath.Dir(resolvedOld) {
+		t.Errorf("replacement cwd = %q, want listener cwd %q", got, filepath.Dir(resolvedOld))
+	}
 	t.Logf("operator cwd after: %s", lsLong(t, sentinel))
+}
+
+func TestUpgradeExporterRefusesRunningBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the upgrade helper targets POSIX hosts")
+	}
+	if _, err := exec.LookPath("lsof"); err != nil {
+		t.Skipf("lsof is required by the production upgrade helper: %v", err)
+	}
+
+	root := t.TempDir()
+	binary := filepath.Join(root, "ai-usage-exporter")
+	buildFixtureExporter(t, binary, "old")
+	port := freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "./ai-usage-exporter", "--port", port)
+	cmd.Dir = root
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start exporter: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	waitForBuild(t, port, "old")
+
+	upgrade := exec.Command("bash", filepath.Join(scriptDir(t), "upgrade-exporter.sh"), "--port", port, "--new-binary", binary)
+	out, err := upgrade.CombinedOutput()
+	if err == nil {
+		t.Fatalf("upgrade unexpectedly succeeded:\n%s", out)
+	}
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("exit code = %v, want 1; output:\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "already the listener executable; refusing to stop PID") {
+		t.Fatalf("missing clear same-binary refusal:\n%s", out)
+	}
+	waitForBuild(t, port, "old")
 }
 
 func scriptDir(t *testing.T) string {
@@ -257,6 +299,21 @@ func processExecutable(pid int) string {
 			return strings.TrimPrefix(line, "n")
 		}
 	}
+	return ""
+}
+
+func processCWD(t *testing.T, pid int) string {
+	t.Helper()
+	out, err := exec.Command("lsof", "-n", "-p", strconv.Itoa(pid), "-a", "-d", "cwd", "-Fn").Output()
+	if err != nil {
+		t.Fatalf("read cwd for pid %d: %v", pid, err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "n") {
+			return strings.TrimPrefix(line, "n")
+		}
+	}
+	t.Fatalf("no cwd returned for pid %d", pid)
 	return ""
 }
 
